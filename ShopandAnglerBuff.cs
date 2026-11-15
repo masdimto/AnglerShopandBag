@@ -12,12 +12,13 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override System.Version Version => new System.Version(1, 2, 1);
+        public override System.Version Version => new System.Version(1, 2, 2);
         public override string Author => "CustomPlugin";
         public override string Description => "Wizard Soul Shop, Angler Biome Crate Bonus, dan Princess Boss Treasure Bag Shop (/bagshop).";
 
         private int[] lastAnglerQuests = new int[Main.maxPlayers];
-        private int[] currentShopNpc = new int[Main.maxPlayers];
+        private int[] lastTalkNpc = new int[Main.maxPlayers];
+        private int[] shopSyncTicks = new int[Main.maxPlayers];
         private bool[] bagShopMode = new bool[Main.maxPlayers];
 
         public ShopAndAnglerBuff(Main game) : base(game) { }
@@ -52,6 +53,9 @@ namespace ShopAndAnglerBuffPlugin
             int idx = args.Player.Index;
             bagShopMode[idx] = !bagShopMode[idx];
 
+            // Paksa sync ulang jika pemain sedang membuka dialog Princess
+            shopSyncTicks[idx] = 30;
+
             if (bagShopMode[idx])
                 args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss yang sudah dikalahkan.");
             else
@@ -63,7 +67,8 @@ namespace ShopAndAnglerBuffPlugin
             if (args.Who >= 0 && args.Who < Main.maxPlayers && TShock.Players[args.Who]?.TPlayer != null)
             {
                 lastAnglerQuests[args.Who] = TShock.Players[args.Who].TPlayer.anglerQuestsFinished;
-                currentShopNpc[args.Who] = -1;
+                lastTalkNpc[args.Who] = -1;
+                shopSyncTicks[args.Who] = 0;
                 bagShopMode[args.Who] = false;
             }
         }
@@ -73,7 +78,8 @@ namespace ShopAndAnglerBuffPlugin
             if (args.Who >= 0 && args.Who < Main.maxPlayers)
             {
                 lastAnglerQuests[args.Who] = 0;
-                currentShopNpc[args.Who] = -1;
+                lastTalkNpc[args.Who] = -1;
+                shopSyncTicks[args.Who] = 0;
                 bagShopMode[args.Who] = false;
             }
         }
@@ -98,39 +104,39 @@ namespace ShopAndAnglerBuffPlugin
 
                     if (npcIndex >= 0 && npcIndex < Main.maxNPCs && Main.npc[npcIndex].active)
                     {
-                        currentShopNpc[tsPlayer.Index] = Main.npc[npcIndex].type;
-
-                        // Jika NPC adalah Wizard atau Princess (mode bagshop), kirim isi toko kustom sesaat setelah dibuka
-                        if (Main.npc[npcIndex].type == NPCID.Wizard)
-                        {
-                            SendCustomShopSlot(tsPlayer, 38, ItemID.SoulofLight, Item.buyPrice(0, 0, 20, 0));
-                            SendCustomShopSlot(tsPlayer, 39, ItemID.SoulofNight, Item.buyPrice(0, 0, 20, 0));
-                        }
-                        else if (Main.npc[npcIndex].type == NPCID.Princess && bagShopMode[tsPlayer.Index])
-                        {
-                            ApplyPrincessBagShop(tsPlayer);
-                        }
+                        lastTalkNpc[tsPlayer.Index] = npcIndex;
+                        // Sinkronkan toko selama 30 tick (0.5 detik) setelah bicara agar tidak tertimpa client
+                        shopSyncTicks[tsPlayer.Index] = 30;
                     }
                     else
                     {
-                        currentShopNpc[tsPlayer.Index] = -1;
+                        lastTalkNpc[tsPlayer.Index] = -1;
+                        shopSyncTicks[tsPlayer.Index] = 0;
                     }
                 }
             }
-            // Packet 104: ShopItem (saat client membeli atau menyinkronkan slot toko)
+            // Packet 104: ShopItem
             else if ((int)args.MsgID == 104)
             {
-                int npcType = currentShopNpc[tsPlayer.Index];
+                shopSyncTicks[tsPlayer.Index] = 15;
+            }
+        }
 
-                if (npcType == NPCID.Wizard)
-                {
-                    SendCustomShopSlot(tsPlayer, 38, ItemID.SoulofLight, Item.buyPrice(0, 0, 20, 0));
-                    SendCustomShopSlot(tsPlayer, 39, ItemID.SoulofNight, Item.buyPrice(0, 0, 20, 0));
-                }
-                else if (npcType == NPCID.Princess && bagShopMode[tsPlayer.Index])
-                {
-                    ApplyPrincessBagShop(tsPlayer);
-                }
+        private void SyncActiveShop(TSPlayer tsPlayer, int npcIndex)
+        {
+            if (npcIndex < 0 || npcIndex >= Main.maxNPCs || !Main.npc[npcIndex].active)
+                return;
+
+            int npcType = Main.npc[npcIndex].type;
+
+            if (npcType == NPCID.Wizard)
+            {
+                SendCustomShopSlot(tsPlayer, 38, ItemID.SoulofLight, Item.buyPrice(0, 0, 20, 0));
+                SendCustomShopSlot(tsPlayer, 39, ItemID.SoulofNight, Item.buyPrice(0, 0, 20, 0));
+            }
+            else if (npcType == NPCID.Princess && bagShopMode[tsPlayer.Index])
+            {
+                ApplyPrincessBagShop(tsPlayer);
             }
         }
 
@@ -237,6 +243,22 @@ namespace ShopAndAnglerBuffPlugin
 
                 Player player = tsPlayer.TPlayer;
 
+                // 1. Cek jika pemain sedang berbicara dengan NPC (termasuk saat buka-tutup UI)
+                int activeNpc = player.talkNPC >= 0 ? player.talkNPC : lastTalkNpc[i];
+                if (activeNpc >= 0)
+                {
+                    if (shopSyncTicks[i] > 0)
+                    {
+                        // Kirim sinkronisasi setiap 5 tick selama masa buka toko
+                        if (shopSyncTicks[i] % 5 == 0)
+                        {
+                            SyncActiveShop(tsPlayer, activeNpc);
+                        }
+                        shopSyncTicks[i]--;
+                    }
+                }
+
+                // 2. Cek Angler Quest selesai
                 if (player.anglerQuestsFinished > lastAnglerQuests[i])
                 {
                     lastAnglerQuests[i] = player.anglerQuestsFinished;
@@ -268,7 +290,7 @@ namespace ShopAndAnglerBuffPlugin
             {
                 // 1. Honey Quest Fish -> Bramble Crate (4877)
                 case ItemID.BumblebeeTuna:
-                    return 4877; // Bramble Crate
+                    return 4877;
 
                 // 2. Jungle Quest Fish -> Bramble Crate (4877) / Jungle Crate (3208)
                 case ItemID.Catfish:
