@@ -12,13 +12,11 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override System.Version Version => new System.Version(1, 2, 2);
+        public override System.Version Version => new System.Version(1, 2, 3);
         public override string Author => "CustomPlugin";
         public override string Description => "Wizard Soul Shop, Angler Biome Crate Bonus, dan Princess Boss Treasure Bag Shop (/bagshop).";
 
         private int[] lastAnglerQuests = new int[Main.maxPlayers];
-        private int[] lastTalkNpc = new int[Main.maxPlayers];
-        private int[] shopSyncTicks = new int[Main.maxPlayers];
         private bool[] bagShopMode = new bool[Main.maxPlayers];
 
         public ShopAndAnglerBuff(Main game) : base(game) { }
@@ -26,7 +24,6 @@ namespace ShopAndAnglerBuffPlugin
         public override void Initialize()
         {
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
-            ServerApi.Hooks.NetGetData.Register(this, OnGetData);
             ServerApi.Hooks.ServerJoin.Register(this, OnServerJoin);
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
 
@@ -41,7 +38,6 @@ namespace ShopAndAnglerBuffPlugin
             if (disposing)
             {
                 ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
-                ServerApi.Hooks.NetGetData.Deregister(this, OnGetData);
                 ServerApi.Hooks.ServerJoin.Deregister(this, OnServerJoin);
                 ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
             }
@@ -53,8 +49,10 @@ namespace ShopAndAnglerBuffPlugin
             int idx = args.Player.Index;
             bagShopMode[idx] = !bagShopMode[idx];
 
-            // Paksa sync ulang jika pemain sedang membuka dialog Princess
-            shopSyncTicks[idx] = 30;
+            if (args.Player.TPlayer != null && args.Player.TPlayer.talkNPC >= 0)
+            {
+                SyncActiveShop(args.Player, args.Player.TPlayer.talkNPC);
+            }
 
             if (bagShopMode[idx])
                 args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss yang sudah dikalahkan.");
@@ -67,8 +65,6 @@ namespace ShopAndAnglerBuffPlugin
             if (args.Who >= 0 && args.Who < Main.maxPlayers && TShock.Players[args.Who]?.TPlayer != null)
             {
                 lastAnglerQuests[args.Who] = TShock.Players[args.Who].TPlayer.anglerQuestsFinished;
-                lastTalkNpc[args.Who] = -1;
-                shopSyncTicks[args.Who] = 0;
                 bagShopMode[args.Who] = false;
             }
         }
@@ -78,47 +74,7 @@ namespace ShopAndAnglerBuffPlugin
             if (args.Who >= 0 && args.Who < Main.maxPlayers)
             {
                 lastAnglerQuests[args.Who] = 0;
-                lastTalkNpc[args.Who] = -1;
-                shopSyncTicks[args.Who] = 0;
                 bagShopMode[args.Who] = false;
-            }
-        }
-
-        private void OnGetData(GetDataEventArgs args)
-        {
-            if (args.Handled || args.Msg.whoAmI < 0 || args.Msg.whoAmI >= Main.maxPlayers)
-                return;
-
-            TSPlayer tsPlayer = TShock.Players[args.Msg.whoAmI];
-            if (tsPlayer == null || !tsPlayer.Active)
-                return;
-
-            // Packet 40: NpcTalk
-            if (args.MsgID == PacketTypes.NpcTalk)
-            {
-                using (MemoryStream ms = new MemoryStream(args.Msg.readBuffer, args.Index, args.Length))
-                using (BinaryReader reader = new BinaryReader(ms))
-                {
-                    byte playerIndex = reader.ReadByte();
-                    short npcIndex = reader.ReadInt16();
-
-                    if (npcIndex >= 0 && npcIndex < Main.maxNPCs && Main.npc[npcIndex].active)
-                    {
-                        lastTalkNpc[tsPlayer.Index] = npcIndex;
-                        // Sinkronkan toko selama 30 tick (0.5 detik) setelah bicara agar tidak tertimpa client
-                        shopSyncTicks[tsPlayer.Index] = 30;
-                    }
-                    else
-                    {
-                        lastTalkNpc[tsPlayer.Index] = -1;
-                        shopSyncTicks[tsPlayer.Index] = 0;
-                    }
-                }
-            }
-            // Packet 104: ShopItem
-            else if ((int)args.MsgID == 104)
-            {
-                shopSyncTicks[tsPlayer.Index] = 15;
             }
         }
 
@@ -243,18 +199,12 @@ namespace ShopAndAnglerBuffPlugin
 
                 Player player = tsPlayer.TPlayer;
 
-                // 1. Cek jika pemain sedang berbicara dengan NPC (termasuk saat buka-tutup UI)
-                int activeNpc = player.talkNPC >= 0 ? player.talkNPC : lastTalkNpc[i];
-                if (activeNpc >= 0)
+                // 1. Selama pemain berbicara dengan NPC (talkNPC >= 0), terus sinkronkan slot toko setiap 15 tick
+                if (player.talkNPC >= 0)
                 {
-                    if (shopSyncTicks[i] > 0)
+                    if (Main.GameUpdateCount % 15 == 0)
                     {
-                        // Kirim sinkronisasi setiap 5 tick selama masa buka toko
-                        if (shopSyncTicks[i] % 5 == 0)
-                        {
-                            SyncActiveShop(tsPlayer, activeNpc);
-                        }
-                        shopSyncTicks[i]--;
+                        SyncActiveShop(tsPlayer, player.talkNPC);
                     }
                 }
 
