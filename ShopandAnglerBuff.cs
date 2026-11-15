@@ -12,7 +12,7 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override System.Version Version => new System.Version(1, 2, 0);
+        public override System.Version Version => new System.Version(1, 2, 1);
         public override string Author => "CustomPlugin";
         public override string Description => "Wizard Soul Shop, Angler Biome Crate Bonus, dan Princess Boss Treasure Bag Shop (/bagshop).";
 
@@ -99,6 +99,17 @@ namespace ShopAndAnglerBuffPlugin
                     if (npcIndex >= 0 && npcIndex < Main.maxNPCs && Main.npc[npcIndex].active)
                     {
                         currentShopNpc[tsPlayer.Index] = Main.npc[npcIndex].type;
+
+                        // Jika NPC adalah Wizard atau Princess (mode bagshop), kirim isi toko kustom sesaat setelah dibuka
+                        if (Main.npc[npcIndex].type == NPCID.Wizard)
+                        {
+                            SendCustomShopSlot(tsPlayer, 38, ItemID.SoulofLight, Item.buyPrice(0, 0, 20, 0));
+                            SendCustomShopSlot(tsPlayer, 39, ItemID.SoulofNight, Item.buyPrice(0, 0, 20, 0));
+                        }
+                        else if (Main.npc[npcIndex].type == NPCID.Princess && bagShopMode[tsPlayer.Index])
+                        {
+                            ApplyPrincessBagShop(tsPlayer);
+                        }
                     }
                     else
                     {
@@ -106,34 +117,36 @@ namespace ShopAndAnglerBuffPlugin
                     }
                 }
             }
-            // Packet 104: ShopItem
-            else if (args.MsgID == PacketTypes.ShopItem)
+            // Packet 104: ShopItem (saat client membeli atau menyinkronkan slot toko)
+            else if ((int)args.MsgID == 104)
             {
                 int npcType = currentShopNpc[tsPlayer.Index];
 
-                // 1. Toko Wizard -> Tambah Soul of Light & Night (20 Silver) di slot 38 & 39
                 if (npcType == NPCID.Wizard)
                 {
                     SendCustomShopSlot(tsPlayer, 38, ItemID.SoulofLight, Item.buyPrice(0, 0, 20, 0));
                     SendCustomShopSlot(tsPlayer, 39, ItemID.SoulofNight, Item.buyPrice(0, 0, 20, 0));
                 }
-                // 2. Toko Princess -> Jika mode /bagshop aktif, ganti seluruh 40 slot menjadi Boss Treasure Bag
                 else if (npcType == NPCID.Princess && bagShopMode[tsPlayer.Index])
                 {
-                    List<(int itemId, int price)> unlockedBags = GetUnlockedBossBags();
+                    ApplyPrincessBagShop(tsPlayer);
+                }
+            }
+        }
 
-                    for (int slot = 0; slot < 40; slot++)
-                    {
-                        if (slot < unlockedBags.Count)
-                        {
-                            SendCustomShopSlot(tsPlayer, slot, unlockedBags[slot].itemId, unlockedBags[slot].price);
-                        }
-                        else
-                        {
-                            // Kosongkan sisa slot agar barang bawaan Princess tidak tumpang tindih
-                            SendCustomShopSlot(tsPlayer, slot, 0, 0);
-                        }
-                    }
+        private void ApplyPrincessBagShop(TSPlayer tsPlayer)
+        {
+            List<(int itemId, int price)> unlockedBags = GetUnlockedBossBags();
+
+            for (int slot = 0; slot < 40; slot++)
+            {
+                if (slot < unlockedBags.Count)
+                {
+                    SendCustomShopSlot(tsPlayer, slot, unlockedBags[slot].itemId, unlockedBags[slot].price);
+                }
+                else
+                {
+                    SendCustomShopSlot(tsPlayer, slot, 0, 0);
                 }
             }
         }
@@ -174,19 +187,19 @@ namespace ShopAndAnglerBuffPlugin
 
         private void SendCustomShopSlot(TSPlayer player, int slot, int itemType, int price)
         {
-            if (Main.shop != null && Main.shop.Length > 0)
+            if (Main.instance != null && Main.instance.shop != null && Main.instance.shop.Length > 0)
             {
                 int shopIdx = player.TPlayer.talkNPC >= 0 ? 1 : 0;
-                if (shopIdx < Main.shop.Length && Main.shop[shopIdx] != null && slot < Main.shop[shopIdx].item.Length)
+                if (shopIdx < Main.instance.shop.Length && Main.instance.shop[shopIdx] != null && slot < Main.instance.shop[shopIdx].item.Length)
                 {
                     if (itemType > 0)
                     {
-                        Main.shop[shopIdx].item[slot].SetDefaults(itemType);
-                        Main.shop[shopIdx].item[slot].shopCustomPrice = price;
+                        Main.instance.shop[shopIdx].item[slot].SetDefaults(itemType);
+                        Main.instance.shop[shopIdx].item[slot].shopCustomPrice = price;
                     }
                     else
                     {
-                        Main.shop[shopIdx].item[slot].TurnToAir();
+                        Main.instance.shop[shopIdx].item[slot].TurnToAir();
                     }
                 }
             }
@@ -206,7 +219,7 @@ namespace ShopAndAnglerBuffPlugin
                 using (BinaryWriter packetWriter = new BinaryWriter(packetMs))
                 {
                     packetWriter.Write((ushort)(payload.Length + 3));
-                    packetWriter.Write((byte)PacketTypes.ShopItem);
+                    packetWriter.Write((byte)104); // Packet 104: ShopItem
                     packetWriter.Write(payload);
 
                     player.SendRawData(packetMs.ToArray());
@@ -253,66 +266,66 @@ namespace ShopAndAnglerBuffPlugin
 
             switch (questFishId)
             {
-                // 1. Honey Quest Fish -> Bramble Crate
+                // 1. Honey Quest Fish -> Bramble Crate (4877)
                 case ItemID.BumblebeeTuna:
-                    return ItemID.JungleFishingCrateHard; // Bramble Crate
+                    return 4877; // Bramble Crate
 
-                // 2. Jungle Quest Fish
+                // 2. Jungle Quest Fish -> Bramble Crate (4877) / Jungle Crate (3208)
                 case ItemID.Catfish:
                 case ItemID.Derpfish:
                 case ItemID.Mudfish:
                 case ItemID.TropicalBarracuda:
-                    return hm ? ItemID.JungleFishingCrateHard : ItemID.JungleFishingCrate;
+                    return hm ? 4877 : 3208;
 
-                // 3. Corruption Quest Fish
+                // 3. Corruption Quest Fish -> Defiled Crate (3982) / Corrupt Crate (3203)
                 case ItemID.Cursedfish:
                 case ItemID.EaterofPlankton:
                 case ItemID.InfectedScabbardfish:
-                    return hm ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
+                    return hm ? 3982 : 3203;
 
-                // 4. Crimson Quest Fish
+                // 4. Crimson Quest Fish -> Hematic Crate (3983) / Crimson Crate (3204)
                 case ItemID.BloodyManowar:
                 case ItemID.Ichorfish:
-                    return hm ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
+                    return hm ? 3983 : 3204;
 
-                // 5. Hallow Quest Fish
+                // 5. Hallow Quest Fish -> Divine Crate (3986) / Hallowed Crate (3207)
                 case ItemID.MirageFish:
                 case ItemID.Pixiefish:
                 case ItemID.UnicornFish:
-                    return hm ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
+                    return hm ? 3986 : 3207;
 
-                // 6. Snow / Tundra / Ice Quest Fish
+                // 6. Snow / Tundra / Ice Quest Fish -> Boreal Crate (4406) / Frozen Crate (4405)
                 case ItemID.Fishron:
                 case ItemID.MutantFlinxfin:
                 case ItemID.Pengfish:
                 case ItemID.TundraTrout:
-                    return hm ? ItemID.FrozenFishingCrateHard : ItemID.FrozenFishingCrate;
+                    return hm ? 4406 : 4405;
 
-                // 7. Desert / Oasis Quest Fish
+                // 7. Desert / Oasis Quest Fish -> Mirage Crate (4408) / Oasis Crate (4407)
                 case ItemID.ScarabFish:
                 case ItemID.ScorpioFish:
-                    return hm ? ItemID.OasisFishingCrateHard : ItemID.OasisFishingCrate;
+                    return hm ? 4408 : 4407;
 
-                // 8. Sky / Floating Island Quest Fish
+                // 8. Sky / Floating Island Quest Fish -> Azure Crate (3985) / Sky Crate (3206)
                 case ItemID.Angelfish:
                 case ItemID.Cloudfish:
                 case ItemID.FallenStarfish:
                 case ItemID.Harpyfish:
                 case ItemID.Wyverntail:
-                    return hm ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
+                    return hm ? 3985 : 3206;
 
-                // 9. Dungeon Quest Fish
+                // 9. Dungeon Quest Fish -> Stockade Crate (3984) / Dungeon Crate (3205)
                 case ItemID.Bonefish:
-                    return hm ? ItemID.DungeonFishingCrateHard : ItemID.DungeonFishingCrate;
+                    return hm ? 3984 : 3205;
 
-                // 10. Ocean / Beach Quest Fish
+                // 10. Ocean / Beach Quest Fish -> Seaside Crate (5003) / Ocean Crate (5002)
                 case ItemID.CapnTunabeard:
                 case ItemID.Clownfish:
-                    return hm ? ItemID.OceanFishingCrateHard : ItemID.OceanFishingCrate;
+                    return hm ? 5003 : 5002;
 
-                // 11. Forest, Underground, & Cavern -> Golden / Titanium Crate
+                // 11. Forest, Underground, & Cavern -> Titanium Crate (3981) / Golden Crate (2336)
                 default:
-                    return hm ? ItemID.GoldenCrateHard : ItemID.GoldenCrate;
+                    return hm ? 3981 : 2336;
             }
         }
     }
