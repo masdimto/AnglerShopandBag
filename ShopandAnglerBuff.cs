@@ -13,7 +13,7 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 3, 0);
+        public override Version Version => new Version(1, 3, 1);
         public override string Author => "CustomPlugin";
         public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bagshop), dan 2 Switch Witch Doctor Potion & Flask Shop (/potionshop, /flaskshop).";
 
@@ -222,7 +222,7 @@ namespace ShopAndAnglerBuffPlugin
             using (BinaryWriter writer = new BinaryWriter(ms))
             {
                 writer.Write((short)0); // Placeholder panjang paket
-                writer.Write((byte)PacketTypes.ShopOverride); // Packet ID 104
+                writer.Write((byte)104); // Packet ID 104 (ShopOverride)
                 writer.Write((byte)slot);
                 writer.Write((short)itemType);
                 writer.Write((short)(itemType > 0 ? 1 : 0)); // Stack = 1
@@ -275,7 +275,7 @@ namespace ShopAndAnglerBuffPlugin
             AddItem(ItemID.MiningPotion);
             AddItem(ItemID.SpelunkerPotion);
             AddItem(ItemID.HunterPotion);
-            AddItem(ItemID.DangersensePotion);
+            AddItem(ItemID.TrapsightPotion); // Dangersense Potion
             AddItem(ItemID.NightOwlPotion);
             AddItem(ItemID.ShinePotion);
             AddItem(ItemID.ObsidianSkinPotion);
@@ -325,9 +325,8 @@ namespace ShopAndAnglerBuffPlugin
             AddItem(ItemID.LesserHealingPotion, 1);
             AddItem(ItemID.LesserManaPotion, 1);
             AddItem(ItemID.LesserRestorationPotion, 1);
-            AddItem(ItemID.LesserLuckPotion, 1);
+            AddItem(ItemID.LuckPotionLesser, 1);
             AddItem(ItemID.InvisibilityPotion, 1);
-            AddItem(ItemID.TrapsightPotion, 1); // Dangersense alias / cadangan jika butuh, atau BiomeSight
             AddItem(ItemID.BiomeSightPotion, 2);
             AddItem(ItemID.LovePotion, 1);
             AddItem(ItemID.StinkPotion, 1);
@@ -342,7 +341,7 @@ namespace ShopAndAnglerBuffPlugin
                 AddItem(ItemID.FlaskofNanites, 6);
                 AddItem(ItemID.FlaskofGold, 5);
                 AddItem(ItemID.TeleportationPotion, 3);
-                AddItem(ItemID.GreaterLuckPotion, 4);
+                AddItem(ItemID.LuckPotionGreater, 4);
                 AddItem(ItemID.SuperHealingPotion, 8);
                 AddItem(ItemID.SuperManaPotion, 8);
             }
@@ -412,9 +411,8 @@ namespace ShopAndAnglerBuffPlugin
                 case ItemID.Derpfish:
                 case ItemID.Mudfish:
                 case ItemID.TropicalBarracuda:
-                    return Main.hardMode ? ItemID.JungleCrateHard : ItemID.JungleCrate;
+                    return Main.hardMode ? ItemID.JungleFishingCrateHard : ItemID.JungleFishingCrate;
 
-                case ItemID.ColdSnap:
                 case ItemID.Fishron:
                 case ItemID.MutantFlinxfin:
                 case ItemID.Pengfish:
@@ -440,7 +438,6 @@ namespace ShopAndAnglerBuffPlugin
                     return Main.hardMode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
 
                 case ItemID.DemonicHellfish:
-                case ItemID.Fishotaur:
                 case ItemID.GuideVoodooFish:
                 case ItemID.Hungerfish:
                     return Main.hardMode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
