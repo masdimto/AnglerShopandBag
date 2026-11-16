@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TerrariaApi.Server;
@@ -13,18 +12,12 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 3, 1);
+        public override Version Version => new Version(1, 0, 0);
         public override string Author => "CustomPlugin";
-        public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bagshop), dan 2 Switch Witch Doctor Potion & Flask Shop (/potionshop, /flaskshop).";
+        public override string Description => "Wizard Soul Shop, Angler Biome Crate Bonus, dan Princess Boss Treasure Bag Shop (/bagshop).";
 
         private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
-
-        // Status mode toko Princess per pemain
         private bool[] bagShopMode = new bool[Main.maxPlayers];
-
-        // Mode toko Witch Doctor per pemain:
-        // 0 = Normal, 1 = Potion Utama (/potionshop), 2 = Flask & Potion Ekstra (/flaskshop)
-        private int[] witchDoctorShopMode = new int[Main.maxPlayers];
 
         public ShopAndAnglerBuff(Main game) : base(game) { }
 
@@ -37,16 +30,6 @@ namespace ShopAndAnglerBuffPlugin
             Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop")
             {
                 HelpText = "Mengganti toko Princess antara toko normal dan toko Boss Treasure Bag."
-            });
-
-            Commands.ChatCommands.Add(new Command("shopangler.potionshop", TogglePotionShopCommand, "potionshop", "pshop")
-            {
-                HelpText = "Switch 1 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Potion Utama."
-            });
-
-            Commands.ChatCommands.Add(new Command("shopangler.flaskshop", ToggleFlaskShopCommand, "flaskshop", "fshop")
-            {
-                HelpText = "Switch 2 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Flask + Potion Ekstra."
             });
         }
 
@@ -67,8 +50,6 @@ namespace ShopAndAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 bagShopMode[who] = false;
-                witchDoctorShopMode[who] = 0;
-
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
                 {
@@ -83,7 +64,6 @@ namespace ShopAndAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 bagShopMode[who] = false;
-                witchDoctorShopMode[who] = 0;
                 lastAnglerQuests.Remove(who);
             }
         }
@@ -105,48 +85,6 @@ namespace ShopAndAnglerBuffPlugin
             }
         }
 
-        private void TogglePotionShopCommand(CommandArgs args)
-        {
-            int who = args.Player.Index;
-            if (who < 0 || who >= Main.maxPlayers)
-                return;
-
-            if (witchDoctorShopMode[who] == 1)
-            {
-                witchDoctorShopMode[who] = 0;
-                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
-            }
-            else
-            {
-                witchDoctorShopMode[who] = 1;
-                string statusHardmode = Main.hardMode
-                    ? "Termasuk Potion Hardmode!"
-                    : "Mode Pre-Hardmode (Potion Hardmode terkunci sampai memasuki Hardmode).";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 1: Potion Utama] AKTIF! Buka toko Witch Doctor untuk membeli potion. ({statusHardmode})");
-            }
-        }
-
-        private void ToggleFlaskShopCommand(CommandArgs args)
-        {
-            int who = args.Player.Index;
-            if (who < 0 || who >= Main.maxPlayers)
-                return;
-
-            if (witchDoctorShopMode[who] == 2)
-            {
-                witchDoctorShopMode[who] = 0;
-                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
-            }
-            else
-            {
-                witchDoctorShopMode[who] = 2;
-                string statusHardmode = Main.hardMode
-                    ? "Termasuk Flask & Potion Hardmode!"
-                    : "Mode Pre-Hardmode (Flask Ichor/Cursed/Venom/Nanites & Super Potion terkunci sampai Hardmode).";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 2: Flask & Potion Ekstra] AKTIF! Buka toko Witch Doctor untuk membeli Flask & Potion tambahan. ({statusHardmode})");
-            }
-        }
-
         private void OnGameUpdate(EventArgs args)
         {
             for (int i = 0; i < Main.maxPlayers; i++)
@@ -157,7 +95,6 @@ namespace ShopAndAnglerBuffPlugin
 
                 Player player = tsPlayer.TPlayer;
 
-                // 1. Cek Angler Quest selesai -> Beri Biome Crate
                 int currentQuests = player.anglerQuestsFinished;
                 if (!lastAnglerQuests.TryGetValue(i, out int prevQuests))
                 {
@@ -176,39 +113,25 @@ namespace ShopAndAnglerBuffPlugin
                     }
                 }
 
-                // 2. Sinkronisasi Toko Kustom saat pemain berbicara dengan NPC
                 if (Main.GameUpdateCount % 10 == 0 && player.talkNPC >= 0 && player.talkNPC < Main.maxNPCs)
                 {
                     NPC talkNpc = Main.npc[player.talkNPC];
-                    if (talkNpc.active)
+                    if (talkNpc.active && talkNpc.type == NPCID.Princess && bagShopMode[i])
                     {
-                        if (talkNpc.type == NPCID.Princess && bagShopMode[i])
-                        {
-                            ApplyShopList(tsPlayer, GetUnlockedBossBags());
-                        }
-                        else if (talkNpc.type == NPCID.WitchDoctor)
-                        {
-                            if (witchDoctorShopMode[i] == 1)
-                            {
-                                ApplyShopList(tsPlayer, GetPrimaryPotions());
-                            }
-                            else if (witchDoctorShopMode[i] == 2)
-                            {
-                                ApplyShopList(tsPlayer, GetFlasksAndExtraPotions());
-                            }
-                        }
+                        ApplyPrincessBagShop(tsPlayer);
                     }
                 }
             }
         }
 
-        private void ApplyShopList(TSPlayer tsPlayer, List<(int itemId, int price)> items)
+        private void ApplyPrincessBagShop(TSPlayer tsPlayer)
         {
-            int maxSlots = Math.Min(items.Count, 40);
+            var bags = GetUnlockedBossBags();
+            int maxSlots = Math.Min(bags.Count, 40);
 
             for (int slot = 0; slot < maxSlots; slot++)
             {
-                SendCustomShopSlot(tsPlayer, slot, items[slot].itemId, items[slot].price);
+                SendCustomShopSlot(tsPlayer, slot, bags[slot].itemId, bags[slot].price);
             }
             for (int slot = maxSlots; slot < 40; slot++)
             {
@@ -221,14 +144,14 @@ namespace ShopAndAnglerBuffPlugin
             using (MemoryStream ms = new MemoryStream())
             using (BinaryWriter writer = new BinaryWriter(ms))
             {
-                writer.Write((short)0); // Placeholder panjang paket
-                writer.Write((byte)104); // Packet ID 104 (ShopOverride)
+                writer.Write((short)0);
+                writer.Write((byte)104);
                 writer.Write((byte)slot);
                 writer.Write((short)itemType);
-                writer.Write((short)(itemType > 0 ? 1 : 0)); // Stack = 1
-                writer.Write((byte)0); // Prefix = 0
-                writer.Write(price); // Harga dalam copper coins
-                writer.Write((byte)0); // Flags
+                writer.Write((short)(itemType > 0 ? 1 : 0));
+                writer.Write((byte)0);
+                writer.Write(price);
+                writer.Write((byte)0);
 
                 byte[] data = ms.ToArray();
                 short length = (short)data.Length;
@@ -236,117 +159,6 @@ namespace ShopAndAnglerBuffPlugin
 
                 tsPlayer.SendRawData(data);
             }
-        }
-
-        // SWITCH 1 (/potionshop): 40 Potion Utama (Pre-Hardmode + Hardmode)
-        private List<(int itemId, int price)> GetPrimaryPotions()
-        {
-            var list = new List<(int itemId, int price)>();
-
-            void AddItem(int itemId, int fallbackGold = 1)
-            {
-                Item temp = new Item();
-                temp.SetDefaults(itemId);
-                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
-                list.Add((itemId, price));
-            }
-
-            // Pre-Hardmode (36 Potion)
-            AddItem(ItemID.HealingPotion);
-            AddItem(ItemID.ManaPotion);
-            AddItem(ItemID.RestorationPotion);
-            AddItem(ItemID.IronskinPotion);
-            AddItem(ItemID.RegenerationPotion);
-            AddItem(ItemID.SwiftnessPotion);
-            AddItem(ItemID.EndurancePotion);
-            AddItem(ItemID.WrathPotion);
-            AddItem(ItemID.RagePotion);
-            AddItem(ItemID.SummoningPotion);
-            AddItem(ItemID.MagicPowerPotion);
-            AddItem(ItemID.ManaRegenerationPotion);
-            AddItem(ItemID.ArcheryPotion);
-            AddItem(ItemID.AmmoReservationPotion);
-            AddItem(ItemID.HeartreachPotion);
-            AddItem(ItemID.ThornsPotion);
-            AddItem(ItemID.TitanPotion);
-            AddItem(ItemID.BattlePotion);
-            AddItem(ItemID.CalmingPotion);
-            AddItem(ItemID.BuilderPotion);
-            AddItem(ItemID.MiningPotion);
-            AddItem(ItemID.SpelunkerPotion);
-            AddItem(ItemID.HunterPotion);
-            AddItem(ItemID.TrapsightPotion); // Dangersense Potion
-            AddItem(ItemID.NightOwlPotion);
-            AddItem(ItemID.ShinePotion);
-            AddItem(ItemID.ObsidianSkinPotion);
-            AddItem(ItemID.GillsPotion);
-            AddItem(ItemID.FlipperPotion);
-            AddItem(ItemID.WaterWalkingPotion);
-            AddItem(ItemID.FeatherfallPotion);
-            AddItem(ItemID.GravitationPotion);
-            AddItem(ItemID.WarmthPotion);
-            AddItem(ItemID.LuckPotion);
-            AddItem(ItemID.RecallPotion);
-            AddItem(ItemID.WormholePotion);
-
-            // Hardmode (4 Potion)
-            if (Main.hardMode)
-            {
-                AddItem(ItemID.GreaterHealingPotion, 2);
-                AddItem(ItemID.GreaterManaPotion, 2);
-                AddItem(ItemID.LifeforcePotion, 5);
-                AddItem(ItemID.InfernoPotion, 5);
-            }
-
-            return list;
-        }
-
-        // SWITCH 2 (/flaskshop): Semua Flask + Potion Mancing, Teleport, & Super Potion
-        private List<(int itemId, int price)> GetFlasksAndExtraPotions()
-        {
-            var list = new List<(int itemId, int price)>();
-
-            void AddItem(int itemId, int fallbackGold = 1)
-            {
-                Item temp = new Item();
-                temp.SetDefaults(itemId);
-                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
-                list.Add((itemId, price));
-            }
-
-            // === PRE-HARDMODE FLASKS & EXTRA POTIONS ===
-            AddItem(ItemID.FlaskofPoison, 2);
-            AddItem(ItemID.FlaskofFire, 2);
-            AddItem(ItemID.FlaskofParty, 2);
-            AddItem(ItemID.FishingPotion, 1);
-            AddItem(ItemID.SonarPotion, 1);
-            AddItem(ItemID.CratePotion, 1);
-            AddItem(ItemID.PotionOfReturn, 2);
-            AddItem(ItemID.LesserHealingPotion, 1);
-            AddItem(ItemID.LesserManaPotion, 1);
-            AddItem(ItemID.LesserRestorationPotion, 1);
-            AddItem(ItemID.LuckPotionLesser, 1);
-            AddItem(ItemID.InvisibilityPotion, 1);
-            AddItem(ItemID.BiomeSightPotion, 2);
-            AddItem(ItemID.LovePotion, 1);
-            AddItem(ItemID.StinkPotion, 1);
-            AddItem(ItemID.GenderChangePotion, 5);
-
-            // === HARDMODE FLASKS & SUPER POTIONS (Hanya Terbuka Jika Sudah Hardmode) ===
-            if (Main.hardMode)
-            {
-                AddItem(ItemID.FlaskofIchor, 5);
-                AddItem(ItemID.FlaskofCursedFlames, 5);
-                AddItem(ItemID.FlaskofVenom, 6);
-                AddItem(ItemID.FlaskofNanites, 6);
-                AddItem(ItemID.FlaskofGold, 5);
-                AddItem(ItemID.TeleportationPotion, 3);
-                AddItem(ItemID.LuckPotionGreater, 4);
-                AddItem(ItemID.SuperHealingPotion, 8);
-                AddItem(ItemID.SuperManaPotion, 8);
-            }
-
-            return list;
         }
 
         private List<(int itemId, int price)> GetUnlockedBossBags()
