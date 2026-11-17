@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TerrariaApi.Server;
@@ -12,24 +13,46 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 0, 0);
+        public override Version Version => new Version(1, 4, 2);
         public override string Author => "CustomPlugin";
-        public override string Description => "Wizard Soul Shop, Angler Biome Crate Bonus, dan Princess Boss Treasure Bag Shop (/bagshop).";
+        public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
 
         private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
+
+        // Status mode toko Princess per pemain
         private bool[] bagShopMode = new bool[Main.maxPlayers];
+
+        // Mode toko Witch Doctor per pemain:
+        // 0 = Normal, 1 = Potion Utama (/ps), 2 = Flask & Potion Ekstra (/fs)
+        private int[] witchDoctorShopMode = new int[Main.maxPlayers];
+
+        // Menyimpan ID NPC terakhir yang diajak bicara agar toko hanya dikirim 1x saat dibuka (anti-bug uang)
+        private int[] lastTalkNpc = new int[Main.maxPlayers];
 
         public ShopAndAnglerBuff(Main game) : base(game) { }
 
         public override void Initialize()
         {
+            for (int i = 0; i < Main.maxPlayers; i++)
+                lastTalkNpc[i] = -1;
+
             ServerApi.Hooks.ServerJoin.Register(this, OnServerJoin);
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
 
-            Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop")
+            Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop", "bs")
             {
                 HelpText = "Mengganti toko Princess antara toko normal dan toko Boss Treasure Bag."
+            });
+
+            Commands.ChatCommands.Add(new Command("shopangler.potionshop", TogglePotionShopCommand, "potionshop", "pshop", "ps")
+            {
+                HelpText = "Switch 1 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Potion Utama."
+            });
+
+            Commands.ChatCommands.Add(new Command("shopangler.flaskshop", ToggleFlaskShopCommand, "flaskshop", "fshop", "fs")
+            {
+                HelpText = "Switch 2 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Flask + Potion Ekstra."
             });
         }
 
@@ -50,6 +73,9 @@ namespace ShopAndAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 bagShopMode[who] = false;
+                witchDoctorShopMode[who] = 0;
+                lastTalkNpc[who] = -1;
+
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
                 {
@@ -64,6 +90,8 @@ namespace ShopAndAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 bagShopMode[who] = false;
+                witchDoctorShopMode[who] = 0;
+                lastTalkNpc[who] = -1;
                 lastAnglerQuests.Remove(who);
             }
         }
@@ -75,6 +103,8 @@ namespace ShopAndAnglerBuffPlugin
                 return;
 
             bagShopMode[who] = !bagShopMode[who];
+            lastTalkNpc[who] = -1;
+
             if (bagShopMode[who])
             {
                 args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss yang sudah dikalahkan.");
@@ -85,16 +115,66 @@ namespace ShopAndAnglerBuffPlugin
             }
         }
 
+        private void TogglePotionShopCommand(CommandArgs args)
+        {
+            int who = args.Player.Index;
+            if (who < 0 || who >= Main.maxPlayers)
+                return;
+
+            lastTalkNpc[who] = -1;
+
+            if (witchDoctorShopMode[who] == 1)
+            {
+                witchDoctorShopMode[who] = 0;
+                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
+            }
+            else
+            {
+                witchDoctorShopMode[who] = 1;
+                string statusHardmode = Main.hardMode
+                    ? "Termasuk Potion Hardmode!"
+                    : "Mode Pre-Hardmode (Potion Hardmode terkunci sampai memasuki Hardmode).";
+                args.Player.SendSuccessMessage($"[Witch Doctor Switch 1: Potion Utama] AKTIF! Buka toko Witch Doctor untuk membeli potion. ({statusHardmode})");
+            }
+        }
+
+        private void ToggleFlaskShopCommand(CommandArgs args)
+        {
+            int who = args.Player.Index;
+            if (who < 0 || who >= Main.maxPlayers)
+                return;
+
+            lastTalkNpc[who] = -1;
+
+            if (witchDoctorShopMode[who] == 2)
+            {
+                witchDoctorShopMode[who] = 0;
+                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
+            }
+            else
+            {
+                witchDoctorShopMode[who] = 2;
+                string statusHardmode = Main.hardMode
+                    ? "Termasuk Flask & Potion Hardmode!"
+                    : "Mode Pre-Hardmode (Flask Ichor/Cursed/Venom/Nanites & Super Potion terkunci sampai Hardmode).";
+                args.Player.SendSuccessMessage($"[Witch Doctor Switch 2: Flask & Potion Ekstra] AKTIF! Buka toko Witch Doctor untuk membeli Flask & Potion tambahan. ({statusHardmode})");
+            }
+        }
+
         private void OnGameUpdate(EventArgs args)
         {
             for (int i = 0; i < Main.maxPlayers; i++)
             {
                 TSPlayer tsPlayer = TShock.Players[i];
                 if (tsPlayer == null || !tsPlayer.Active || tsPlayer.TPlayer == null)
+                {
+                    lastTalkNpc[i] = -1;
                     continue;
+                }
 
                 Player player = tsPlayer.TPlayer;
 
+                // 1. Cek Angler Quest selesai -> Beri Biome Crate
                 int currentQuests = player.anglerQuestsFinished;
                 if (!lastAnglerQuests.TryGetValue(i, out int prevQuests))
                 {
@@ -113,25 +193,45 @@ namespace ShopAndAnglerBuffPlugin
                     }
                 }
 
-                if (Main.GameUpdateCount % 10 == 0 && player.talkNPC >= 0 && player.talkNPC < Main.maxNPCs)
+                // 2. Kirim Toko Kustom HANYA 1 KALI saat pemain baru mulai berbicara dengan NPC
+                int currentTalkNpc = player.talkNPC;
+                if (currentTalkNpc != lastTalkNpc[i])
                 {
-                    NPC talkNpc = Main.npc[player.talkNPC];
-                    if (talkNpc.active && talkNpc.type == NPCID.Princess && bagShopMode[i])
+                    lastTalkNpc[i] = currentTalkNpc;
+
+                    if (currentTalkNpc >= 0 && currentTalkNpc < Main.maxNPCs)
                     {
-                        ApplyPrincessBagShop(tsPlayer);
+                        NPC talkNpc = Main.npc[currentTalkNpc];
+                        if (talkNpc.active)
+                        {
+                            if (talkNpc.type == NPCID.Princess && bagShopMode[i])
+                            {
+                                ApplyShopList(tsPlayer, GetUnlockedBossBags());
+                            }
+                            else if (talkNpc.type == NPCID.WitchDoctor)
+                            {
+                                if (witchDoctorShopMode[i] == 1)
+                                {
+                                    ApplyShopList(tsPlayer, GetPrimaryPotions());
+                                }
+                                else if (witchDoctorShopMode[i] == 2)
+                                {
+                                    ApplyShopList(tsPlayer, GetFlasksAndExtraPotions());
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        private void ApplyPrincessBagShop(TSPlayer tsPlayer)
+        private void ApplyShopList(TSPlayer tsPlayer, List<(int itemId, int price)> items)
         {
-            var bags = GetUnlockedBossBags();
-            int maxSlots = Math.Min(bags.Count, 40);
+            int maxSlots = Math.Min(items.Count, 40);
 
             for (int slot = 0; slot < maxSlots; slot++)
             {
-                SendCustomShopSlot(tsPlayer, slot, bags[slot].itemId, bags[slot].price);
+                SendCustomShopSlot(tsPlayer, slot, items[slot].itemId, items[slot].price);
             }
             for (int slot = maxSlots; slot < 40; slot++)
             {
@@ -145,7 +245,7 @@ namespace ShopAndAnglerBuffPlugin
             using (BinaryWriter writer = new BinaryWriter(ms))
             {
                 writer.Write((short)0);
-                writer.Write((byte)104);
+                writer.Write((byte)104); // Packet ID 104 (ShopOverride)
                 writer.Write((byte)slot);
                 writer.Write((short)itemType);
                 writer.Write((short)(itemType > 0 ? 1 : 0));
@@ -161,6 +261,114 @@ namespace ShopAndAnglerBuffPlugin
             }
         }
 
+        // SWITCH 1 (/ps): 40 Potion Utama (Pre-Hardmode + Hardmode)
+        private List<(int itemId, int price)> GetPrimaryPotions()
+        {
+            var list = new List<(int itemId, int price)>();
+
+            void AddItem(int itemId, int fallbackGold = 1)
+            {
+                Item temp = new Item();
+                temp.SetDefaults(itemId);
+                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
+                list.Add((itemId, price));
+            }
+
+            AddItem(ItemID.HealingPotion);
+            AddItem(ItemID.ManaPotion);
+            AddItem(ItemID.RestorationPotion);
+            AddItem(ItemID.IronskinPotion);
+            AddItem(ItemID.RegenerationPotion);
+            AddItem(ItemID.SwiftnessPotion);
+            AddItem(ItemID.EndurancePotion);
+            AddItem(ItemID.WrathPotion);
+            AddItem(ItemID.RagePotion);
+            AddItem(ItemID.SummoningPotion);
+            AddItem(ItemID.MagicPowerPotion);
+            AddItem(ItemID.ManaRegenerationPotion);
+            AddItem(ItemID.ArcheryPotion);
+            AddItem(ItemID.AmmoReservationPotion);
+            AddItem(ItemID.HeartreachPotion);
+            AddItem(ItemID.ThornsPotion);
+            AddItem(ItemID.TitanPotion);
+            AddItem(ItemID.BattlePotion);
+            AddItem(ItemID.CalmingPotion);
+            AddItem(ItemID.BuilderPotion);
+            AddItem(ItemID.MiningPotion);
+            AddItem(ItemID.SpelunkerPotion);
+            AddItem(ItemID.HunterPotion);
+            AddItem(ItemID.TrapsightPotion);
+            AddItem(ItemID.NightOwlPotion);
+            AddItem(ItemID.ShinePotion);
+            AddItem(ItemID.ObsidianSkinPotion);
+            AddItem(ItemID.GillsPotion);
+            AddItem(ItemID.FlipperPotion);
+            AddItem(ItemID.WaterWalkingPotion);
+            AddItem(ItemID.FeatherfallPotion);
+            AddItem(ItemID.GravitationPotion);
+            AddItem(ItemID.WarmthPotion);
+            AddItem(ItemID.LuckPotion);
+            AddItem(ItemID.RecallPotion);
+            AddItem(ItemID.WormholePotion);
+
+            if (Main.hardMode)
+            {
+                AddItem(ItemID.GreaterHealingPotion, 2);
+                AddItem(ItemID.GreaterManaPotion, 2);
+                AddItem(ItemID.LifeforcePotion, 5);
+                AddItem(ItemID.InfernoPotion, 5);
+            }
+
+            return list;
+        }
+
+        // SWITCH 2 (/fs): Semua Flask + Potion Mancing, Teleport, & Super Potion
+        private List<(int itemId, int price)> GetFlasksAndExtraPotions()
+        {
+            var list = new List<(int itemId, int price)>();
+
+            void AddItem(int itemId, int fallbackGold = 1)
+            {
+                Item temp = new Item();
+                temp.SetDefaults(itemId);
+                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
+                list.Add((itemId, price));
+            }
+
+            AddItem(ItemID.FlaskofPoison, 2);
+            AddItem(ItemID.FlaskofFire, 2);
+            AddItem(ItemID.FlaskofParty, 2);
+            AddItem(ItemID.FishingPotion, 1);
+            AddItem(ItemID.SonarPotion, 1);
+            AddItem(ItemID.CratePotion, 1);
+            AddItem(ItemID.PotionOfReturn, 2);
+            AddItem(ItemID.LesserHealingPotion, 1);
+            AddItem(ItemID.LesserManaPotion, 1);
+            AddItem(ItemID.LesserRestorationPotion, 1);
+            AddItem(ItemID.LuckPotionLesser, 1);
+            AddItem(ItemID.InvisibilityPotion, 1);
+            AddItem(ItemID.BiomeSightPotion, 2);
+            AddItem(ItemID.LovePotion, 1);
+            AddItem(ItemID.StinkPotion, 1);
+            AddItem(ItemID.GenderChangePotion, 5);
+
+            if (Main.hardMode)
+            {
+                AddItem(ItemID.FlaskofIchor, 5);
+                AddItem(ItemID.FlaskofCursedFlames, 5);
+                AddItem(ItemID.FlaskofVenom, 6);
+                AddItem(ItemID.FlaskofNanites, 6);
+                AddItem(ItemID.FlaskofGold, 5);
+                AddItem(ItemID.TeleportationPotion, 3);
+                AddItem(ItemID.LuckPotionGreater, 4);
+                AddItem(ItemID.SuperHealingPotion, 8);
+                AddItem(ItemID.SuperManaPotion, 8);
+            }
+
+            return list;
+        }
+
+        // Daftar Harga Boss Treasure Bag (Diskon 60% dari harga awal)
         private List<(int itemId, int price)> GetUnlockedBossBags()
         {
             var list = new List<(int itemId, int price)>();
@@ -171,24 +379,24 @@ namespace ShopAndAnglerBuffPlugin
                     list.Add((itemId, Item.buyPrice(0, gold, 0, 0)));
             }
 
-            AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 10);
-            AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 15);
-            AddBag(NPC.downedBoss2, ItemID.EaterOfWorldsBossBag, 20);
-            AddBag(NPC.downedBoss2, ItemID.BrainOfCthulhuBossBag, 20);
-            AddBag(NPC.downedQueenBee, ItemID.QueenBeeBossBag, 25);
-            AddBag(NPC.downedBoss3, ItemID.SkeletronBossBag, 30);
-            AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 30);
-            AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 40);
-            AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 50);
-            AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 60);
-            AddBag(NPC.downedMechBoss2, ItemID.TwinsBossBag, 60);
-            AddBag(NPC.downedMechBoss3, ItemID.SkeletronPrimeBossBag, 60);
-            AddBag(NPC.downedPlantBoss, ItemID.PlanteraBossBag, 80);
-            AddBag(NPC.downedGolemBoss, ItemID.GolemBossBag, 90);
-            AddBag(NPC.downedFishron, ItemID.FishronBossBag, 100);
-            AddBag(NPC.downedEmpressOfLight, ItemID.FairyQueenBossBag, 100);
-            AddBag(NPC.downedAncientCultist, ItemID.CultistBossBag, 120);
-            AddBag(NPC.downedMoonlord, ItemID.MoonLordBossBag, 150);
+            AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 4);
+            AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 6);
+            AddBag(NPC.downedBoss2, ItemID.EaterOfWorldsBossBag, 8);
+            AddBag(NPC.downedBoss2, ItemID.BrainOfCthulhuBossBag, 8);
+            AddBag(NPC.downedQueenBee, ItemID.QueenBeeBossBag, 10);
+            AddBag(NPC.downedBoss3, ItemID.SkeletronBossBag, 12);
+            AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 12);
+            AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 16);
+            AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 20);
+            AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 24);
+            AddBag(NPC.downedMechBoss2, ItemID.TwinsBossBag, 24);
+            AddBag(NPC.downedMechBoss3, ItemID.SkeletronPrimeBossBag, 24);
+            AddBag(NPC.downedPlantBoss, ItemID.PlanteraBossBag, 32);
+            AddBag(NPC.downedGolemBoss, ItemID.GolemBossBag, 36);
+            AddBag(NPC.downedFishron, ItemID.FishronBossBag, 40);
+            AddBag(NPC.downedEmpressOfLight, ItemID.FairyQueenBossBag, 40);
+            AddBag(NPC.downedAncientCultist, ItemID.CultistBossBag, 48);
+            AddBag(NPC.downedMoonlord, ItemID.MoonLordBossBag, 60);
 
             return list;
         }
