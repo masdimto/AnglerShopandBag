@@ -13,7 +13,7 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 4, 2);
+        public override Version Version => new Version(1, 4, 3);
         public override string Author => "CustomPlugin";
         public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
 
@@ -26,19 +26,24 @@ namespace ShopAndAnglerBuffPlugin
         // 0 = Normal, 1 = Potion Utama (/ps), 2 = Flask & Potion Ekstra (/fs)
         private int[] witchDoctorShopMode = new int[Main.maxPlayers];
 
-        // Menyimpan ID NPC terakhir yang diajak bicara agar toko hanya dikirim 1x saat dibuka (anti-bug uang)
+        // Pelacak dialog NPC & timer pengiriman beruntun singkat (agar tidak tertimpa toko asli namun tidak reset uang)
         private int[] lastTalkNpc = new int[Main.maxPlayers];
+        private int[] shopSyncTicks = new int[Main.maxPlayers];
 
         public ShopAndAnglerBuff(Main game) : base(game) { }
 
         public override void Initialize()
         {
             for (int i = 0; i < Main.maxPlayers; i++)
+            {
                 lastTalkNpc[i] = -1;
+                shopSyncTicks[i] = -1;
+            }
 
             ServerApi.Hooks.ServerJoin.Register(this, OnServerJoin);
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
+            ServerApi.Hooks.NetGetData.Register(this, OnGetData);
 
             Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop", "bs")
             {
@@ -63,6 +68,7 @@ namespace ShopAndAnglerBuffPlugin
                 ServerApi.Hooks.ServerJoin.Deregister(this, OnServerJoin);
                 ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
                 ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
+                ServerApi.Hooks.NetGetData.Deregister(this, OnGetData);
             }
             base.Dispose(disposing);
         }
@@ -75,6 +81,7 @@ namespace ShopAndAnglerBuffPlugin
                 bagShopMode[who] = false;
                 witchDoctorShopMode[who] = 0;
                 lastTalkNpc[who] = -1;
+                shopSyncTicks[who] = -1;
 
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
@@ -92,7 +99,25 @@ namespace ShopAndAnglerBuffPlugin
                 bagShopMode[who] = false;
                 witchDoctorShopMode[who] = 0;
                 lastTalkNpc[who] = -1;
+                shopSyncTicks[who] = -1;
                 lastAnglerQuests.Remove(who);
+            }
+        }
+
+        // Deteksi saat pemain membuka dialog / mengklik tombol Shop pada NPC
+        private void OnGetData(GetDataEventArgs args)
+        {
+            if (args.Handled)
+                return;
+
+            // Packet ID 40 = PlayerNpcTalk
+            if ((int)args.MsgID == 40)
+            {
+                int plrIdx = args.Msg.whoAmI;
+                if (plrIdx >= 0 && plrIdx < Main.maxPlayers)
+                {
+                    shopSyncTicks[plrIdx] = 0;
+                }
             }
         }
 
@@ -104,6 +129,7 @@ namespace ShopAndAnglerBuffPlugin
 
             bagShopMode[who] = !bagShopMode[who];
             lastTalkNpc[who] = -1;
+            shopSyncTicks[who] = 0;
 
             if (bagShopMode[who])
             {
@@ -122,6 +148,7 @@ namespace ShopAndAnglerBuffPlugin
                 return;
 
             lastTalkNpc[who] = -1;
+            shopSyncTicks[who] = 0;
 
             if (witchDoctorShopMode[who] == 1)
             {
@@ -145,6 +172,7 @@ namespace ShopAndAnglerBuffPlugin
                 return;
 
             lastTalkNpc[who] = -1;
+            shopSyncTicks[who] = 0;
 
             if (witchDoctorShopMode[who] == 2)
             {
@@ -169,6 +197,7 @@ namespace ShopAndAnglerBuffPlugin
                 if (tsPlayer == null || !tsPlayer.Active || tsPlayer.TPlayer == null)
                 {
                     lastTalkNpc[i] = -1;
+                    shopSyncTicks[i] = -1;
                     continue;
                 }
 
@@ -193,13 +222,27 @@ namespace ShopAndAnglerBuffPlugin
                     }
                 }
 
-                // 2. Kirim Toko Kustom HANYA 1 KALI saat pemain baru mulai berbicara dengan NPC
+                // 2. Deteksi perubahan dialog NPC
                 int currentTalkNpc = player.talkNPC;
                 if (currentTalkNpc != lastTalkNpc[i])
                 {
                     lastTalkNpc[i] = currentTalkNpc;
+                    if (currentTalkNpc >= 0)
+                    {
+                        shopSyncTicks[i] = 0; // Mulai siklus sinkronisasi 3 tahap
+                    }
+                    else
+                    {
+                        shopSyncTicks[i] = -1;
+                    }
+                }
 
-                    if (currentTalkNpc >= 0 && currentTalkNpc < Main.maxNPCs)
+                // 3. Kirim daftar toko pada tick ke-2, ke-10, dan ke-25 setelah buka NPC, lalu STOP
+                // Menjamin toko tidak tertimpa paket asli Terraria sekaligus tidak mereset transaksi pembelian
+                if (currentTalkNpc >= 0 && currentTalkNpc < Main.maxNPCs && shopSyncTicks[i] >= 0)
+                {
+                    int tick = shopSyncTicks[i];
+                    if (tick == 2 || tick == 10 || tick == 25)
                     {
                         NPC talkNpc = Main.npc[currentTalkNpc];
                         if (talkNpc.active)
@@ -221,6 +264,11 @@ namespace ShopAndAnglerBuffPlugin
                             }
                         }
                     }
+
+                    if (tick <= 30)
+                        shopSyncTicks[i]++;
+                    else
+                        shopSyncTicks[i] = -1; // Berhenti mengirim agar uang & stok 100% aman saat beli
                 }
             }
         }
@@ -443,28 +491,4 @@ namespace ShopAndAnglerBuffPlugin
                 case ItemID.ScorpioFish:
                     return Main.hardMode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
 
-                case ItemID.Cursedfish:
-                case ItemID.EaterofPlankton:
-                case ItemID.InfectedScabbardfish:
-                    return Main.hardMode ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
-
-                case ItemID.BloodyManowar:
-                case ItemID.Ichorfish:
-                    return Main.hardMode ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
-
-                case ItemID.MirageFish:
-                case ItemID.Pixiefish:
-                case ItemID.UnicornFish:
-                    return Main.hardMode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
-
-                case ItemID.DemonicHellfish:
-                case ItemID.GuideVoodooFish:
-                case ItemID.Hungerfish:
-                    return Main.hardMode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
-
-                default:
-                    return Main.hardMode ? ItemID.IronCrateHard : ItemID.IronCrate;
-            }
-        }
-    }
-}
+        
