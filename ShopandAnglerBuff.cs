@@ -18,15 +18,8 @@ namespace ShopAndAnglerBuffPlugin
         public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
 
         private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
-
-        // Status mode toko Princess per pemain
         private bool[] bagShopMode = new bool[Main.maxPlayers];
-
-        // Mode toko Witch Doctor per pemain:
-        // 0 = Normal, 1 = Potion Utama (/ps), 2 = Flask & Potion Ekstra (/fs)
         private int[] witchDoctorShopMode = new int[Main.maxPlayers];
-
-        // Pelacak dialog NPC & timer pengiriman beruntun singkat (agar tidak tertimpa toko asli namun tidak reset uang)
         private int[] lastTalkNpc = new int[Main.maxPlayers];
         private int[] shopSyncTicks = new int[Main.maxPlayers];
 
@@ -104,13 +97,11 @@ namespace ShopAndAnglerBuffPlugin
             }
         }
 
-        // Deteksi saat pemain membuka dialog / mengklik tombol Shop pada NPC
         private void OnGetData(GetDataEventArgs args)
         {
             if (args.Handled)
                 return;
 
-            // Packet ID 40 = PlayerNpcTalk
             if ((int)args.MsgID == 40)
             {
                 int plrIdx = args.Msg.whoAmI;
@@ -132,13 +123,9 @@ namespace ShopAndAnglerBuffPlugin
             shopSyncTicks[who] = 0;
 
             if (bagShopMode[who])
-            {
                 args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss yang sudah dikalahkan.");
-            }
             else
-            {
                 args.Player.SendInfoMessage("[Boss Bag Shop] NONAKTIF. Toko Princess kembali menjual item normal.");
-            }
         }
 
         private void TogglePotionShopCommand(CommandArgs args)
@@ -158,10 +145,8 @@ namespace ShopAndAnglerBuffPlugin
             else
             {
                 witchDoctorShopMode[who] = 1;
-                string statusHardmode = Main.hardMode
-                    ? "Termasuk Potion Hardmode!"
-                    : "Mode Pre-Hardmode (Potion Hardmode terkunci sampai memasuki Hardmode).";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 1: Potion Utama] AKTIF! Buka toko Witch Doctor untuk membeli potion. ({statusHardmode})");
+                string statusHardmode = Main.hardMode ? "Termasuk Potion Hardmode!" : "Mode Pre-Hardmode.";
+                args.Player.SendSuccessMessage($"[Witch Doctor Switch 1: Potion Utama] AKTIF! ({statusHardmode})");
             }
         }
 
@@ -182,10 +167,8 @@ namespace ShopAndAnglerBuffPlugin
             else
             {
                 witchDoctorShopMode[who] = 2;
-                string statusHardmode = Main.hardMode
-                    ? "Termasuk Flask & Potion Hardmode!"
-                    : "Mode Pre-Hardmode (Flask Ichor/Cursed/Venom/Nanites & Super Potion terkunci sampai Hardmode).";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 2: Flask & Potion Ekstra] AKTIF! Buka toko Witch Doctor untuk membeli Flask & Potion tambahan. ({statusHardmode})");
+                string statusHardmode = Main.hardMode ? "Termasuk Flask & Potion Hardmode!" : "Mode Pre-Hardmode.";
+                args.Player.SendSuccessMessage($"[Witch Doctor Switch 2: Flask & Potion Ekstra] AKTIF! ({statusHardmode})");
             }
         }
 
@@ -203,7 +186,6 @@ namespace ShopAndAnglerBuffPlugin
 
                 Player player = tsPlayer.TPlayer;
 
-                // 1. Cek Angler Quest selesai -> Beri Biome Crate
                 int currentQuests = player.anglerQuestsFinished;
                 if (!lastAnglerQuests.TryGetValue(i, out int prevQuests))
                 {
@@ -222,23 +204,13 @@ namespace ShopAndAnglerBuffPlugin
                     }
                 }
 
-                // 2. Deteksi perubahan dialog NPC
                 int currentTalkNpc = player.talkNPC;
                 if (currentTalkNpc != lastTalkNpc[i])
                 {
                     lastTalkNpc[i] = currentTalkNpc;
-                    if (currentTalkNpc >= 0)
-                    {
-                        shopSyncTicks[i] = 0; // Mulai siklus sinkronisasi 3 tahap
-                    }
-                    else
-                    {
-                        shopSyncTicks[i] = -1;
-                    }
+                    shopSyncTicks[i] = currentTalkNpc >= 0 ? 0 : -1;
                 }
 
-                // 3. Kirim daftar toko pada tick ke-2, ke-10, dan ke-25 setelah buka NPC, lalu STOP
-                // Menjamin toko tidak tertimpa paket asli Terraria sekaligus tidak mereset transaksi pembelian
                 if (currentTalkNpc >= 0 && currentTalkNpc < Main.maxNPCs && shopSyncTicks[i] >= 0)
                 {
                     int tick = shopSyncTicks[i];
@@ -248,19 +220,13 @@ namespace ShopAndAnglerBuffPlugin
                         if (talkNpc.active)
                         {
                             if (talkNpc.type == NPCID.Princess && bagShopMode[i])
-                            {
                                 ApplyShopList(tsPlayer, GetUnlockedBossBags());
-                            }
                             else if (talkNpc.type == NPCID.WitchDoctor)
                             {
                                 if (witchDoctorShopMode[i] == 1)
-                                {
                                     ApplyShopList(tsPlayer, GetPrimaryPotions());
-                                }
                                 else if (witchDoctorShopMode[i] == 2)
-                                {
                                     ApplyShopList(tsPlayer, GetFlasksAndExtraPotions());
-                                }
                             }
                         }
                     }
@@ -268,7 +234,7 @@ namespace ShopAndAnglerBuffPlugin
                     if (tick <= 30)
                         shopSyncTicks[i]++;
                     else
-                        shopSyncTicks[i] = -1; // Berhenti mengirim agar uang & stok 100% aman saat beli
+                        shopSyncTicks[i] = -1;
                 }
             }
         }
@@ -276,15 +242,10 @@ namespace ShopAndAnglerBuffPlugin
         private void ApplyShopList(TSPlayer tsPlayer, List<(int itemId, int price)> items)
         {
             int maxSlots = Math.Min(items.Count, 40);
-
             for (int slot = 0; slot < maxSlots; slot++)
-            {
                 SendCustomShopSlot(tsPlayer, slot, items[slot].itemId, items[slot].price);
-            }
             for (int slot = maxSlots; slot < 40; slot++)
-            {
                 SendCustomShopSlot(tsPlayer, slot, 0, 0);
-            }
         }
 
         private void SendCustomShopSlot(TSPlayer tsPlayer, int slot, int itemType, int price)
@@ -293,7 +254,7 @@ namespace ShopAndAnglerBuffPlugin
             using (BinaryWriter writer = new BinaryWriter(ms))
             {
                 writer.Write((short)0);
-                writer.Write((byte)104); // Packet ID 104 (ShopOverride)
+                writer.Write((byte)104);
                 writer.Write((byte)slot);
                 writer.Write((short)itemType);
                 writer.Write((short)(itemType > 0 ? 1 : 0));
@@ -309,7 +270,6 @@ namespace ShopAndAnglerBuffPlugin
             }
         }
 
-        // SWITCH 1 (/ps): 40 Potion Utama (Pre-Hardmode + Hardmode)
         private List<(int itemId, int price)> GetPrimaryPotions()
         {
             var list = new List<(int itemId, int price)>();
@@ -370,7 +330,6 @@ namespace ShopAndAnglerBuffPlugin
             return list;
         }
 
-        // SWITCH 2 (/fs): Semua Flask + Potion Mancing, Teleport, & Super Potion
         private List<(int itemId, int price)> GetFlasksAndExtraPotions()
         {
             var list = new List<(int itemId, int price)>();
@@ -416,7 +375,6 @@ namespace ShopAndAnglerBuffPlugin
             return list;
         }
 
-        // Daftar Harga Boss Treasure Bag (Diskon 60% dari harga awal)
         private List<(int itemId, int price)> GetUnlockedBossBags()
         {
             var list = new List<(int itemId, int price)>();
@@ -490,6 +448,29 @@ namespace ShopAndAnglerBuffPlugin
                 case ItemID.ScarabFish:
                 case ItemID.ScorpioFish:
                     return Main.hardMode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
-            }
 
-        
+                case ItemID.Cursedfish:
+                case ItemID.EaterofPlankton:
+                case ItemID.InfectedScabbardfish:
+                    return Main.hardMode ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
+
+                case ItemID.BloodyManowar:
+                case ItemID.Ichorfish:
+                    return Main.hardMode ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
+
+                case ItemID.MirageFish:
+                case ItemID.Pixiefish:
+                case ItemID.UnicornFish:
+                    return Main.hardMode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
+
+                case ItemID.DemonicHellfish:
+                case ItemID.GuideVoodooFish:
+                case ItemID.Hungerfish:
+                    return Main.hardMode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
+
+                default:
+                    return Main.hardMode ? ItemID.IronCrateHard : ItemID.IronCrate;
+            }
+        }
+    }
+}
