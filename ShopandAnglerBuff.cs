@@ -490,5 +490,6 @@ namespace ShopAndAnglerBuffPlugin
                 case ItemID.ScarabFish:
                 case ItemID.ScorpioFish:
                     return Main.hardMode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
+            }
 
         
