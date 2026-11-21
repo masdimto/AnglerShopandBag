@@ -14,9 +14,9 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 4, 5);
+        public override Version Version => new Version(1, 4, 7);
         public override string Author => "CustomPlugin";
-        public override string Description => "Angler Biome Crate Bonus, Princess Boss & Mini-Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
+        public override string Description => "Angler Biome Crate Bonus, Princess Boss & Mini-Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Shop (/ps, /fs).";
 
         private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
         private bool[] bagShopMode = new bool[Main.maxPlayers];
@@ -376,7 +376,6 @@ namespace ShopAndAnglerBuffPlugin
             return list;
         }
 
-        // Daftar Harga Boss & Mini-Boss Treasure Bag (Diskon 50% dari harga awal)
         private List<(int itemId, int price)> GetUnlockedBossBags()
         {
             var list = new List<(int itemId, int price)>();
@@ -387,7 +386,7 @@ namespace ShopAndAnglerBuffPlugin
                     list.Add((itemId, Item.buyPrice(0, gold, silver, 0)));
             }
 
-            // Pre-Hardmode Boss & Mini-Boss
+            // Pre-Hardmode Boss & Mini-Boss (Diskon 50%)
             AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 5);
             AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 7, 50);
             AddBag(DD2Event.DownedInvasionT1, ItemID.BossBagDarkMage, 7, 50);
@@ -398,7 +397,7 @@ namespace ShopAndAnglerBuffPlugin
             AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 15);
             AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 20);
 
-            // Hardmode Boss & Mini-Boss
+            // Hardmode Boss & Mini-Boss (Diskon 50%)
             AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 25);
             AddBag(DD2Event.DownedInvasionT2, ItemID.BossBagOgre, 25);
             AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 30);
@@ -419,6 +418,21 @@ namespace ShopAndAnglerBuffPlugin
         {
             switch (questFishId)
             {
+                // 1. 100% Sky Crate (Fiks hanya di Sky)
+                case ItemID.CloudFish:
+                case ItemID.Harpyfish:
+                case ItemID.Wyverntail:
+                    return Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
+
+                // 2. Campuran Sky / Space / Surface -> 50% Sky Crate, 50% Gold Crate
+                case ItemID.Angelfish:
+                case ItemID.FallenStarfish:
+                case ItemID.TheFishofCthulu:
+                    return Main.rand.Next(2) == 0
+                        ? (Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate)
+                        : (Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate);
+
+                // 3. Underground & Cavern -> 100% Gold Crate
                 case ItemID.AmanitaFungifin:
                 case ItemID.Batfish:
                 case ItemID.Bonefish:
@@ -427,59 +441,60 @@ namespace ShopAndAnglerBuffPlugin
                 case ItemID.Spiderfish:
                     return Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate;
 
-                case ItemID.Bunnyfish:
-                case ItemID.DynamiteFish:
-                case ItemID.Harpyfish:
-                case ItemID.Slimefish:
-                case ItemID.Wyverntail:
-                case ItemID.FallenStarfish:
-                case ItemID.TheFishofCthulu:
-                    return Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
-
+                // 4. Ocean -> 100% Ocean Crate
                 case ItemID.CapnTunabeard:
                 case ItemID.Clownfish:
-                case ItemID.BumblebeeTuna:
                     return Main.hardMode ? ItemID.OceanCrateHard : ItemID.OceanCrate;
 
+                // 5. Jungle & Honey -> 100% Jungle Crate
+                case ItemID.BumblebeeTuna:
                 case ItemID.Catfish:
                 case ItemID.Derpfish:
                 case ItemID.Mudfish:
                 case ItemID.TropicalBarracuda:
                     return Main.hardMode ? ItemID.JungleFishingCrateHard : ItemID.JungleFishingCrate;
 
+                // 6. Snow / Tundra -> 100% Frozen Crate
                 case ItemID.Fishron:
                 case ItemID.MutantFlinxfin:
                 case ItemID.Pengfish:
                 case ItemID.TundraTrout:
                     return Main.hardMode ? ItemID.FrozenCrateHard : ItemID.FrozenCrate;
 
+                // 7. Desert / Oasis -> 100% Oasis Crate
                 case ItemID.ScarabFish:
                 case ItemID.ScorpioFish:
                     return Main.hardMode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
 
+                // 8. Corruption -> 100% Corrupt Crate
                 case ItemID.Cursedfish:
                 case ItemID.EaterofPlankton:
                 case ItemID.InfectedScabbardfish:
                     return Main.hardMode ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
 
+                // 9. Crimson -> 100% Crimson Crate
                 case ItemID.BloodyManowar:
                 case ItemID.Ichorfish:
                     return Main.hardMode ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
 
+                // 10. Hallow -> 100% Hallowed Crate
                 case ItemID.MirageFish:
                 case ItemID.Pixiefish:
                 case ItemID.UnicornFish:
                     return Main.hardMode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
 
+                // 11. Underworld / Lava -> 100% Lava Crate
                 case ItemID.DemonicHellfish:
                 case ItemID.GuideVoodooFish:
                 case ItemID.Hungerfish:
                     return Main.hardMode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
 
+                // 12. Surface Umum / Forest -> 70% Iron Crate, 30% Golden Crate
                 default:
-                    return Main.hardMode ? ItemID.IronCrateHard : ItemID.IronCrate;
+                    return Main.rand.Next(100) < 70
+                        ? (Main.hardMode ? ItemID.IronCrateHard : ItemID.IronCrate)
+                        : (Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate);
             }
         }
     }
 }
-
