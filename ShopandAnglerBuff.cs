@@ -419,7 +419,7 @@ namespace ShopAndAnglerBuffPlugin
             switch (questFishId)
             {
                 // 1. 100% Sky Crate (Fiks hanya di Sky)
-                case ItemID.CloudFish:
+                case ItemID.Cloudfish:
                 case ItemID.Harpyfish:
                 case ItemID.Wyverntail:
                     return Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
