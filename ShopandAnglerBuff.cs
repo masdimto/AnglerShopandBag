@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Microsoft.Xna.Framework;
 using Terraria;
+using Terraria.GameContent.Events;
 using Terraria.ID;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -13,9 +14,9 @@ namespace ShopAndAnglerBuffPlugin
     public class ShopAndAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 4, 3);
+        public override Version Version => new Version(1, 4, 5);
         public override string Author => "CustomPlugin";
-        public override string Description => "Angler Biome Crate Bonus, Princess Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
+        public override string Description => "Angler Biome Crate Bonus, Princess Boss & Mini-Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Potion & Flask Shop (/ps, /fs).";
 
         private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
         private bool[] bagShopMode = new bool[Main.maxPlayers];
@@ -40,7 +41,7 @@ namespace ShopAndAnglerBuffPlugin
 
             Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop", "bs")
             {
-                HelpText = "Mengganti toko Princess antara toko normal dan toko Boss Treasure Bag."
+                HelpText = "Mengganti toko Princess antara toko normal dan toko Boss & Mini-Boss Treasure Bag."
             });
 
             Commands.ChatCommands.Add(new Command("shopangler.potionshop", TogglePotionShopCommand, "potionshop", "pshop", "ps")
@@ -123,7 +124,7 @@ namespace ShopAndAnglerBuffPlugin
             shopSyncTicks[who] = 0;
 
             if (bagShopMode[who])
-                args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss yang sudah dikalahkan.");
+                args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss & mini-boss yang sudah dikalahkan.");
             else
                 args.Player.SendInfoMessage("[Boss Bag Shop] NONAKTIF. Toko Princess kembali menjual item normal.");
         }
@@ -375,34 +376,41 @@ namespace ShopAndAnglerBuffPlugin
             return list;
         }
 
+        // Daftar Harga Boss & Mini-Boss Treasure Bag (Diskon 50% dari harga awal)
         private List<(int itemId, int price)> GetUnlockedBossBags()
         {
             var list = new List<(int itemId, int price)>();
 
-            void AddBag(bool condition, int itemId, int gold)
+            void AddBag(bool condition, int itemId, int gold, int silver = 0)
             {
                 if (condition)
-                    list.Add((itemId, Item.buyPrice(0, gold, 0, 0)));
+                    list.Add((itemId, Item.buyPrice(0, gold, silver, 0)));
             }
 
-            AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 4);
-            AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 6);
-            AddBag(NPC.downedBoss2, ItemID.EaterOfWorldsBossBag, 8);
-            AddBag(NPC.downedBoss2, ItemID.BrainOfCthulhuBossBag, 8);
-            AddBag(NPC.downedQueenBee, ItemID.QueenBeeBossBag, 10);
-            AddBag(NPC.downedBoss3, ItemID.SkeletronBossBag, 12);
-            AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 12);
-            AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 16);
-            AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 20);
-            AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 24);
-            AddBag(NPC.downedMechBoss2, ItemID.TwinsBossBag, 24);
-            AddBag(NPC.downedMechBoss3, ItemID.SkeletronPrimeBossBag, 24);
-            AddBag(NPC.downedPlantBoss, ItemID.PlanteraBossBag, 32);
-            AddBag(NPC.downedGolemBoss, ItemID.GolemBossBag, 36);
-            AddBag(NPC.downedFishron, ItemID.FishronBossBag, 40);
-            AddBag(NPC.downedEmpressOfLight, ItemID.FairyQueenBossBag, 40);
-            AddBag(NPC.downedAncientCultist, ItemID.CultistBossBag, 48);
-            AddBag(NPC.downedMoonlord, ItemID.MoonLordBossBag, 60);
+            // Pre-Hardmode Boss & Mini-Boss
+            AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 5);
+            AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 7, 50);
+            AddBag(DD2Event.DownedInvasionT1, ItemID.BossBagDarkMage, 7, 50);
+            AddBag(NPC.downedBoss2, ItemID.EaterOfWorldsBossBag, 10);
+            AddBag(NPC.downedBoss2, ItemID.BrainOfCthulhuBossBag, 10);
+            AddBag(NPC.downedQueenBee, ItemID.QueenBeeBossBag, 12, 50);
+            AddBag(NPC.downedBoss3, ItemID.SkeletronBossBag, 15);
+            AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 15);
+            AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 20);
+
+            // Hardmode Boss & Mini-Boss
+            AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 25);
+            AddBag(DD2Event.DownedInvasionT2, ItemID.BossBagOgre, 25);
+            AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 30);
+            AddBag(NPC.downedMechBoss2, ItemID.TwinsBossBag, 30);
+            AddBag(NPC.downedMechBoss3, ItemID.SkeletronPrimeBossBag, 30);
+            AddBag(NPC.downedPlantBoss, ItemID.PlanteraBossBag, 40);
+            AddBag(NPC.downedGolemBoss, ItemID.GolemBossBag, 45);
+            AddBag(DD2Event.DownedInvasionT3, ItemID.BossBagBetsy, 45);
+            AddBag(NPC.downedFishron, ItemID.FishronBossBag, 50);
+            AddBag(NPC.downedEmpressOfLight, ItemID.FairyQueenBossBag, 50);
+            AddBag(NPC.downedAncientCultist, ItemID.CultistBossBag, 60);
+            AddBag(NPC.downedMoonlord, ItemID.MoonLordBossBag, 75);
 
             return list;
         }
@@ -474,3 +482,4 @@ namespace ShopAndAnglerBuffPlugin
         }
     }
 }
+
