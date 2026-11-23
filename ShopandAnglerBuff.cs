@@ -11,14 +11,15 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 3, 1);
+        public override Version Version => new Version(2, 3, 2);
         public override string Author => "CustomPlugin";
-        public override string Description => "Toggle /bagshop (/bs) pada Clothier (refresh 1 detik anti-error) & hadiah 2x Crate quest Angler.";
+        public override string Description => "Toggle /bagshop (/bs) pada Clothier & hadiah 2x Crate quest Angler.";
 
         private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
         private static HashSet<int> bagShopEnabled = new HashSet<int>();
         private int[] shopSyncTimer = new int[Main.maxPlayers];
+        private bool[] warnedEmpty = new bool[Main.maxPlayers];
 
         public ShopandAnglerBuff(Main game) : base(game) { }
 
@@ -53,6 +54,7 @@ namespace ShopandAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 shopSyncTimer[who] = 0;
+                warnedEmpty[who] = false;
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
                     lastQuestCount[who] = player.TPlayer.anglerQuestsFinished;
@@ -64,7 +66,10 @@ namespace ShopandAnglerBuffPlugin
             lastQuestCount.Remove(args.Who);
             bagShopEnabled.Remove(args.Who);
             if (args.Who >= 0 && args.Who < Main.maxPlayers)
+            {
                 shopSyncTimer[args.Who] = 0;
+                warnedEmpty[args.Who] = false;
+            }
         }
 
         private void ToggleBagShop(CommandArgs args)
@@ -74,13 +79,16 @@ namespace ShopandAnglerBuffPlugin
             {
                 bagShopEnabled.Remove(index);
                 shopSyncTimer[index] = 0;
+                warnedEmpty[index] = false;
                 args.Player.SendInfoMessage("[BagShop] Mode Treasure Bag DIMATIKAN. Toko Clothier kembali normal.");
             }
             else
             {
                 bagShopEnabled.Add(index);
                 shopSyncTimer[index] = 60;
-                args.Player.SendSuccessMessage("[BagShop] Mode Treasure Bag DIAKTIFKAN! Silakan bicara dan buka Shop di Clothier.");
+                warnedEmpty[index] = false;
+                int count = GetDefeatedBossBags().Count;
+                args.Player.SendSuccessMessage($"[BagShop] Mode Treasure Bag DIAKTIFKAN! ({count} Treasure Bag tersedia). Silakan buka Shop di Clothier.");
             }
         }
 
@@ -103,6 +111,15 @@ namespace ShopandAnglerBuffPlugin
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
             const int maxSlots = 40;
 
+            if (availableBags.Count == 0 && !warnedEmpty[who])
+            {
+                warnedEmpty[who] = true;
+                TShock.Players[who]?.SendWarningMessage("[BagShop] Belum ada boss yang tercatat kalah di world ini! Kalahkan boss dulu agar bag-nya muncul.");
+            }
+
+            // Sinkronkan juga ke Chest toko server agar transaksi beli di server valid
+            Chest serverShop = Main.instance?.shop?[Main.npcShop];
+
             for (int slot = 0; slot < maxSlots; slot++)
             {
                 int itemType = 0;
@@ -116,9 +133,24 @@ namespace ShopandAnglerBuffPlugin
                     stack = 1;
                     prefix = 0;
                     price = availableBags[slot].price;
+
+                    if (serverShop != null && serverShop.item != null && slot < serverShop.item.Length)
+                    {
+                        if (serverShop.item[slot] == null)
+                            serverShop.item[slot] = new Item();
+                        serverShop.item[slot].SetDefaults(itemType);
+                        serverShop.item[slot].stack = 1;
+                        serverShop.item[slot].shopCustomPrice = price;
+                    }
+                }
+                else
+                {
+                    if (serverShop != null && serverShop.item != null && slot < serverShop.item.Length && serverShop.item[slot] != null)
+                    {
+                        serverShop.item[slot].TurnToAir();
+                    }
                 }
 
-                // Packet ID 104 = ShopOverride / UpdateShopItem
                 NetMessage.SendData(104, who, -1, null, slot, itemType, stack, prefix, price);
             }
         }
@@ -215,6 +247,7 @@ namespace ShopandAnglerBuffPlugin
                     else
                     {
                         shopSyncTimer[i] = 60;
+                        warnedEmpty[i] = false;
                     }
                 }
 
