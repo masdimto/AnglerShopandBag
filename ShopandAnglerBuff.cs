@@ -11,7 +11,7 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 3, 0);
+        public override Version Version => new Version(2, 3, 1);
         public override string Author => "CustomPlugin";
         public override string Description => "Toggle /bagshop (/bs) pada Clothier (refresh 1 detik anti-error) & hadiah 2x Crate quest Angler.";
 
@@ -79,7 +79,7 @@ namespace ShopandAnglerBuffPlugin
             else
             {
                 bagShopEnabled.Add(index);
-                shopSyncTimer[index] = 60; // Langsung kirim di tick berikutnya saat dialog dibuka
+                shopSyncTimer[index] = 60;
                 args.Player.SendSuccessMessage("[BagShop] Mode Treasure Bag DIAKTIFKAN! Silakan bicara dan buka Shop di Clothier.");
             }
         }
@@ -101,7 +101,7 @@ namespace ShopandAnglerBuffPlugin
         private void SendBagShopToPlayer(int who)
         {
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
-            int maxSlots = Chest.maxItems;
+            const int maxSlots = 40;
 
             for (int slot = 0; slot < maxSlots; slot++)
             {
@@ -118,7 +118,8 @@ namespace ShopandAnglerBuffPlugin
                     price = availableBags[slot].price;
                 }
 
-                NetMessage.SendData((int)PacketTypes.UpdateShopItem, who, -1, null, slot, itemType, stack, prefix, price);
+                // Packet ID 104 = ShopOverride / UpdateShopItem
+                NetMessage.SendData(104, who, -1, null, slot, itemType, stack, prefix, price);
             }
         }
 
@@ -205,7 +206,6 @@ namespace ShopandAnglerBuffPlugin
                     if (talkNpc >= 0 && talkNpc < Main.maxNPCs && Main.npc[talkNpc].active && Main.npc[talkNpc].type == NPCID.Clothier)
                     {
                         shopSyncTimer[i]++;
-                        // Kirim 1x setiap 60 tick (1 detik) agar tidak hilang saat klik Shop dan tetap ringan
                         if (shopSyncTimer[i] >= 60)
                         {
                             shopSyncTimer[i] = 0;
@@ -214,7 +214,6 @@ namespace ShopandAnglerBuffPlugin
                     }
                     else
                     {
-                        // Siapkan agar langsung terkirim begitu pertama kali menyentuh dialog Clothier
                         shopSyncTimer[i] = 60;
                     }
                 }
