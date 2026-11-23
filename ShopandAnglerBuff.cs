@@ -1,58 +1,34 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using Microsoft.Xna.Framework;
 using Terraria;
-using Terraria.GameContent.Events;
 using Terraria.ID;
 using TerrariaApi.Server;
 using TShockAPI;
 
-namespace ShopAndAnglerBuffPlugin
+namespace ShopandAnglerBuffPlugin
 {
     [ApiVersion(2, 1)]
-    public class ShopAndAnglerBuff : TerrariaPlugin
+    public class ShopandAnglerBuff : TerrariaPlugin
     {
-        public override string Name => "ShopAndAnglerBuff";
-        public override Version Version => new Version(1, 4, 7);
+        public override string Name => "ShopandAnglerBuff";
+        public override Version Version => new Version(2, 0, 0);
         public override string Author => "CustomPlugin";
-        public override string Description => "Angler Biome Crate Bonus, Princess Boss & Mini-Boss Bag Shop (/bs), dan 2 Switch Witch Doctor Shop (/ps, /fs).";
+        public override string Description => "Clothier menjual Treasure Bag boss yang sudah dikalahkan dengan harga custom & hadiah 2x Crate sesuai bioma saat menyelesaikan quest Angler.";
 
-        private Dictionary<int, int> lastAnglerQuests = new Dictionary<int, int>();
-        private bool[] bagShopMode = new bool[Main.maxPlayers];
-        private int[] witchDoctorShopMode = new int[Main.maxPlayers];
-        private int[] lastTalkNpc = new int[Main.maxPlayers];
-        private int[] shopSyncTicks = new int[Main.maxPlayers];
+        private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
 
-        public ShopAndAnglerBuff(Main game) : base(game) { }
+        // Pelacak mini-boss / event boss yang sudah dikalahkan di world
+        private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
+
+        public ShopandAnglerBuff(Main game) : base(game) { }
 
         public override void Initialize()
         {
-            for (int i = 0; i < Main.maxPlayers; i++)
-            {
-                lastTalkNpc[i] = -1;
-                shopSyncTicks[i] = -1;
-            }
-
             ServerApi.Hooks.ServerJoin.Register(this, OnServerJoin);
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
-            ServerApi.Hooks.NetGetData.Register(this, OnGetData);
-
-            Commands.ChatCommands.Add(new Command("shopangler.bagshop", ToggleBagShopCommand, "bagshop", "bshop", "bs")
-            {
-                HelpText = "Mengganti toko Princess antara toko normal dan toko Boss & Mini-Boss Treasure Bag."
-            });
-
-            Commands.ChatCommands.Add(new Command("shopangler.potionshop", TogglePotionShopCommand, "potionshop", "pshop", "ps")
-            {
-                HelpText = "Switch 1 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Potion Utama."
-            });
-
-            Commands.ChatCommands.Add(new Command("shopangler.flaskshop", ToggleFlaskShopCommand, "flaskshop", "fshop", "fs")
-            {
-                HelpText = "Switch 2 Witch Doctor: Mengganti toko Witch Doctor antara normal dan Semua Flask + Potion Ekstra."
-            });
+            ServerApi.Hooks.NpcKilled.Register(this, OnNpcKilled);
+            ServerApi.Hooks.NpcAIUpdate.Register(this, OnNpcAIUpdate);
         }
 
         protected override void Dispose(bool disposing)
@@ -62,7 +38,8 @@ namespace ShopAndAnglerBuffPlugin
                 ServerApi.Hooks.ServerJoin.Deregister(this, OnServerJoin);
                 ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
                 ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
-                ServerApi.Hooks.NetGetData.Deregister(this, OnGetData);
+                ServerApi.Hooks.NpcKilled.Deregister(this, OnNpcKilled);
+                ServerApi.Hooks.NpcAIUpdate.Deregister(this, OnNpcAIUpdate);
             }
             base.Dispose(disposing);
         }
@@ -72,428 +49,262 @@ namespace ShopAndAnglerBuffPlugin
             int who = args.Who;
             if (who >= 0 && who < Main.maxPlayers)
             {
-                bagShopMode[who] = false;
-                witchDoctorShopMode[who] = 0;
-                lastTalkNpc[who] = -1;
-                shopSyncTicks[who] = -1;
-
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
-                {
-                    lastAnglerQuests[who] = player.TPlayer.anglerQuestsFinished;
-                }
+                    lastQuestCount[who] = player.TPlayer.anglerQuestsFinished;
             }
         }
 
         private void OnServerLeave(LeaveEventArgs args)
         {
-            int who = args.Who;
-            if (who >= 0 && who < Main.maxPlayers)
+            lastQuestCount.Remove(args.Who);
+        }
+
+        private void OnNpcKilled(NpcKilledEventArgs args)
+        {
+            if (args.npc == null) return;
+            int type = args.npc.type;
+
+            if (type == NPCID.DD2DarkMageT1 || type == NPCID.DD2DarkMageT3 ||
+                type == NPCID.DD2OgreT2 || type == NPCID.DD2OgreT3 ||
+                type == NPCID.PirateShip ||
+                type == NPCID.MourningWood ||
+                type == NPCID.Pumpking ||
+                type == NPCID.Everscream ||
+                type == NPCID.SantaNK1 ||
+                type == NPCID.IceQueen ||
+                type == NPCID.MartianSaucerCore)
             {
-                bagShopMode[who] = false;
-                witchDoctorShopMode[who] = 0;
-                lastTalkNpc[who] = -1;
-                shopSyncTicks[who] = -1;
-                lastAnglerQuests.Remove(who);
+                defeatedMiniBosses.Add(type);
             }
         }
 
-        private void OnGetData(GetDataEventArgs args)
+        private int Coins(int platinum, int gold, int silver = 0, int copper = 0)
         {
-            if (args.Handled)
+            return (platinum * 1000000) + (gold * 10000) + (silver * 100) + copper;
+        }
+
+        // Mengisi toko Clothier dengan Treasure Bag dari Boss yang sudah dikalahkan
+        private void OnNpcAIUpdate(NpcAiUpdateEventArgs args)
+        {
+            NPC npc = args.Npc;
+            if (npc == null || !npc.active || npc.type != NPCID.Clothier)
                 return;
 
-            if ((int)args.MsgID == 40)
+            // Cek apakah ada pemain yang sedang membuka toko Clothier ini
+            bool anyPlayerTalking = false;
+            for (int i = 0; i < Main.maxPlayers; i++)
             {
-                int plrIdx = args.Msg.whoAmI;
-                if (plrIdx >= 0 && plrIdx < Main.maxPlayers)
+                Player p = Main.player[i];
+                if (p != null && p.active && p.talkNPC == npc.whoAmI)
                 {
-                    shopSyncTicks[plrIdx] = 0;
+                    anyPlayerTalking = true;
+                    break;
                 }
             }
+
+            if (!anyPlayerTalking) return;
+
+            Chest shop = Main.instance.shop[Main.npcShop];
+            if (shop == null) return;
+
+            List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
+            if (availableBags.Count == 0) return;
+
+            // Cari slot kosong setelah barang jualan asli Clothier
+            int slot = 0;
+            while (slot < Chest.maxItems && shop.item[slot] != null && shop.item[slot].type > 0)
+            {
+                // Hindari duplikasi jika sudah terisi
+                if (shop.item[slot].type == availableBags[0].bagId)
+                    return;
+                slot++;
+            }
+
+            foreach (var entry in availableBags)
+            {
+                if (slot >= Chest.maxItems) break;
+
+                Item bagItem = new Item();
+                bagItem.SetDefaults(entry.bagId);
+                bagItem.shopCustomPrice = entry.price;
+                shop.item[slot] = bagItem;
+                slot++;
+            }
         }
 
-        private void ToggleBagShopCommand(CommandArgs args)
+        private List<(int bagId, int price)> GetDefeatedBossBags()
         {
-            int who = args.Player.Index;
-            if (who < 0 || who >= Main.maxPlayers)
-                return;
+            var list = new List<(int bagId, int price)>();
 
-            bagShopMode[who] = !bagShopMode[who];
-            lastTalkNpc[who] = -1;
-            shopSyncTicks[who] = 0;
+            // === PRE-HARDMODE (25 - 50 Gold) ===
+            if (NPC.downedSlimeKing)
+                list.Add((ItemID.KingSlimeBossBag, Coins(0, 25)));
 
-            if (bagShopMode[who])
-                args.Player.SendSuccessMessage("[Boss Bag Shop] AKTIF! Buka toko Princess untuk membeli Treasure Bag boss & mini-boss yang sudah dikalahkan.");
-            else
-                args.Player.SendInfoMessage("[Boss Bag Shop] NONAKTIF. Toko Princess kembali menjual item normal.");
+            if (NPC.downedBoss1) // Eye of Cthulhu
+                list.Add((ItemID.EyeOfCthulhuBossBag, Coins(0, 30)));
+
+            if (NPC.downedBoss2) // EoW / BoC
+            {
+                if (WorldGen.crimson)
+                    list.Add((ItemID.BrainOfCthulhuBossBag, Coins(0, 35)));
+                else
+                    list.Add((ItemID.EaterOfWorldsBossBag, Coins(0, 35)));
+            }
+
+            if (NPC.downedQueenBee)
+                list.Add((ItemID.QueenBeeBossBag, Coins(0, 40)));
+
+            if (NPC.downedBoss3) // Skeletron
+                list.Add((ItemID.SkeletronBossBag, Coins(0, 45)));
+
+            if (NPC.downedDeerclops)
+                list.Add((ItemID.DeerclopsBossBag, Coins(0, 50)));
+
+            // === WALL OF FLESH (80 Gold) ===
+            if (Main.hardMode)
+                list.Add((ItemID.WallOfFleshBossBag, Coins(0, 80)));
+
+            // === HARDMODE BOSSES ===
+            if (NPC.downedQueenSlime)
+                list.Add((ItemID.QueenSlimeBossBag, Coins(1, 17)));
+
+            if (NPC.downedMechBoss1) // The Destroyer
+                list.Add((ItemID.DestroyerBossBag, Coins(1, 31)));
+
+            if (NPC.downedMechBoss2) // The Twins
+                list.Add((ItemID.TwinsBossBag, Coins(1, 31)));
+
+            if (NPC.downedMechBoss3) // Skeletron Prime
+                list.Add((ItemID.SkeletronPrimeBossBag, Coins(1, 31)));
+
+            if (NPC.downedPlantBoss)
+                list.Add((ItemID.PlanteraBossBag, Coins(1, 78)));
+
+            if (NPC.downedGolemBoss)
+                list.Add((ItemID.GolemBossBag, Coins(2, 31)));
+
+            if (NPC.downedTowerSolar || NPC.downedTowerVortex || NPC.downedTowerNebula || NPC.downedTowerStardust || NPC.downedEmpressOfLight || NPC.downedFishron || NPC.downedGolemBoss)
+            {
+                // Betsy (Old One's Army Tier 3)
+                if (defeatedMiniBosses.Contains(NPCID.DD2Betsy) || Terraria.GameContent.Events.DD2Event.DownedInvasionT3)
+                    list.Add((ItemID.BossBagBetsy, Coins(4, 51)));
+            }
+
+            if (NPC.downedFishron)
+                list.Add((ItemID.FishronBossBag, Coins(7, 89)));
+
+            if (NPC.downedEmpressOfLight)
+                list.Add((ItemID.FairyQueenBossBag, Coins(10, 23)));
+
+            if (NPC.downedMoonlord)
+                list.Add((ItemID.MoonLordBossBag, Coins(50, 0)));
+
+            return list;
         }
 
-        private void TogglePotionShopCommand(CommandArgs args)
-        {
-            int who = args.Player.Index;
-            if (who < 0 || who >= Main.maxPlayers)
-                return;
-
-            lastTalkNpc[who] = -1;
-            shopSyncTicks[who] = 0;
-
-            if (witchDoctorShopMode[who] == 1)
-            {
-                witchDoctorShopMode[who] = 0;
-                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
-            }
-            else
-            {
-                witchDoctorShopMode[who] = 1;
-                string statusHardmode = Main.hardMode ? "Termasuk Potion Hardmode!" : "Mode Pre-Hardmode.";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 1: Potion Utama] AKTIF! ({statusHardmode})");
-            }
-        }
-
-        private void ToggleFlaskShopCommand(CommandArgs args)
-        {
-            int who = args.Player.Index;
-            if (who < 0 || who >= Main.maxPlayers)
-                return;
-
-            lastTalkNpc[who] = -1;
-            shopSyncTicks[who] = 0;
-
-            if (witchDoctorShopMode[who] == 2)
-            {
-                witchDoctorShopMode[who] = 0;
-                args.Player.SendInfoMessage("[Witch Doctor Shop] NONAKTIF. Toko Witch Doctor kembali menjual item normal.");
-            }
-            else
-            {
-                witchDoctorShopMode[who] = 2;
-                string statusHardmode = Main.hardMode ? "Termasuk Flask & Potion Hardmode!" : "Mode Pre-Hardmode.";
-                args.Player.SendSuccessMessage($"[Witch Doctor Switch 2: Flask & Potion Ekstra] AKTIF! ({statusHardmode})");
-            }
-        }
-
+        // Deteksi penyelesaian quest Angler -> Beri 2x Crate sesuai bioma ikan quest
         private void OnGameUpdate(EventArgs args)
         {
             for (int i = 0; i < Main.maxPlayers; i++)
             {
                 TSPlayer tsPlayer = TShock.Players[i];
                 if (tsPlayer == null || !tsPlayer.Active || tsPlayer.TPlayer == null)
+                    continue;
+
+                int currentQuests = tsPlayer.TPlayer.anglerQuestsFinished;
+                if (!lastQuestCount.TryGetValue(i, out int prevQuests))
                 {
-                    lastTalkNpc[i] = -1;
-                    shopSyncTicks[i] = -1;
+                    lastQuestCount[i] = currentQuests;
                     continue;
                 }
 
-                Player player = tsPlayer.TPlayer;
+                if (currentQuests > prevQuests)
+                {
+                    lastQuestCount[i] = currentQuests;
 
-                int currentQuests = player.anglerQuestsFinished;
-                if (!lastAnglerQuests.TryGetValue(i, out int prevQuests))
-                {
-                    lastAnglerQuests[i] = currentQuests;
-                }
-                else if (currentQuests > prevQuests)
-                {
-                    lastAnglerQuests[i] = currentQuests;
-                    int questFishId = Main.anglerQuestItemNetIDs[Main.anglerQuest];
-                    int crateId = GetBiomeCrateForQuestFish(questFishId);
+                    int questFishType = Main.anglerQuestItemNetIDs[Main.anglerQuest];
+                    int crateId = GetCrateForQuestFish(questFishType, Main.hardMode);
+
                     if (crateId > 0)
                     {
-                        tsPlayer.GiveItem(crateId, 1);
+                        tsPlayer.GiveItem(crateId, 2);
                         string crateName = Lang.GetItemNameValue(crateId);
-                        tsPlayer.SendSuccessMessage($"[Angler Bonus] Kamu mendapatkan 1x {crateName} sesuai biome Quest Fish!");
+                        tsPlayer.SendSuccessMessage($"[Angler Reward] Quest selesai! Kamu mendapatkan bonus 2x {crateName}!");
                     }
                 }
-
-                int currentTalkNpc = player.talkNPC;
-                if (currentTalkNpc != lastTalkNpc[i])
-                {
-                    lastTalkNpc[i] = currentTalkNpc;
-                    shopSyncTicks[i] = currentTalkNpc >= 0 ? 0 : -1;
-                }
-
-                if (currentTalkNpc >= 0 && currentTalkNpc < Main.maxNPCs && shopSyncTicks[i] >= 0)
-                {
-                    int tick = shopSyncTicks[i];
-                    if (tick == 2 || tick == 10 || tick == 25)
-                    {
-                        NPC talkNpc = Main.npc[currentTalkNpc];
-                        if (talkNpc.active)
-                        {
-                            if (talkNpc.type == NPCID.Princess && bagShopMode[i])
-                                ApplyShopList(tsPlayer, GetUnlockedBossBags());
-                            else if (talkNpc.type == NPCID.WitchDoctor)
-                            {
-                                if (witchDoctorShopMode[i] == 1)
-                                    ApplyShopList(tsPlayer, GetPrimaryPotions());
-                                else if (witchDoctorShopMode[i] == 2)
-                                    ApplyShopList(tsPlayer, GetFlasksAndExtraPotions());
-                            }
-                        }
-                    }
-
-                    if (tick <= 30)
-                        shopSyncTicks[i]++;
-                    else
-                        shopSyncTicks[i] = -1;
-                }
             }
         }
 
-        private void ApplyShopList(TSPlayer tsPlayer, List<(int itemId, int price)> items)
+        private int GetCrateForQuestFish(int fishId, bool isHardmode)
         {
-            int maxSlots = Math.Min(items.Count, 40);
-            for (int slot = 0; slot < maxSlots; slot++)
-                SendCustomShopSlot(tsPlayer, slot, items[slot].itemId, items[slot].price);
-            for (int slot = maxSlots; slot < 40; slot++)
-                SendCustomShopSlot(tsPlayer, slot, 0, 0);
-        }
-
-        private void SendCustomShopSlot(TSPlayer tsPlayer, int slot, int itemType, int price)
-        {
-            using (MemoryStream ms = new MemoryStream())
-            using (BinaryWriter writer = new BinaryWriter(ms))
+            switch (fishId)
             {
-                writer.Write((short)0);
-                writer.Write((byte)104);
-                writer.Write((byte)slot);
-                writer.Write((short)itemType);
-                writer.Write((short)(itemType > 0 ? 1 : 0));
-                writer.Write((byte)0);
-                writer.Write(price);
-                writer.Write((byte)0);
-
-                byte[] data = ms.ToArray();
-                short length = (short)data.Length;
-                BitConverter.GetBytes(length).CopyTo(data, 0);
-
-                tsPlayer.SendRawData(data);
-            }
-        }
-
-        private List<(int itemId, int price)> GetPrimaryPotions()
-        {
-            var list = new List<(int itemId, int price)>();
-
-            void AddItem(int itemId, int fallbackGold = 1)
-            {
-                Item temp = new Item();
-                temp.SetDefaults(itemId);
-                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
-                list.Add((itemId, price));
-            }
-
-            AddItem(ItemID.HealingPotion);
-            AddItem(ItemID.ManaPotion);
-            AddItem(ItemID.RestorationPotion);
-            AddItem(ItemID.IronskinPotion);
-            AddItem(ItemID.RegenerationPotion);
-            AddItem(ItemID.SwiftnessPotion);
-            AddItem(ItemID.EndurancePotion);
-            AddItem(ItemID.WrathPotion);
-            AddItem(ItemID.RagePotion);
-            AddItem(ItemID.SummoningPotion);
-            AddItem(ItemID.MagicPowerPotion);
-            AddItem(ItemID.ManaRegenerationPotion);
-            AddItem(ItemID.ArcheryPotion);
-            AddItem(ItemID.AmmoReservationPotion);
-            AddItem(ItemID.HeartreachPotion);
-            AddItem(ItemID.ThornsPotion);
-            AddItem(ItemID.TitanPotion);
-            AddItem(ItemID.BattlePotion);
-            AddItem(ItemID.CalmingPotion);
-            AddItem(ItemID.BuilderPotion);
-            AddItem(ItemID.MiningPotion);
-            AddItem(ItemID.SpelunkerPotion);
-            AddItem(ItemID.HunterPotion);
-            AddItem(ItemID.TrapsightPotion);
-            AddItem(ItemID.NightOwlPotion);
-            AddItem(ItemID.ShinePotion);
-            AddItem(ItemID.ObsidianSkinPotion);
-            AddItem(ItemID.GillsPotion);
-            AddItem(ItemID.FlipperPotion);
-            AddItem(ItemID.WaterWalkingPotion);
-            AddItem(ItemID.FeatherfallPotion);
-            AddItem(ItemID.GravitationPotion);
-            AddItem(ItemID.WarmthPotion);
-            AddItem(ItemID.LuckPotion);
-            AddItem(ItemID.RecallPotion);
-            AddItem(ItemID.WormholePotion);
-
-            if (Main.hardMode)
-            {
-                AddItem(ItemID.GreaterHealingPotion, 2);
-                AddItem(ItemID.GreaterManaPotion, 2);
-                AddItem(ItemID.LifeforcePotion, 5);
-                AddItem(ItemID.InfernoPotion, 5);
-            }
-
-            return list;
-        }
-
-        private List<(int itemId, int price)> GetFlasksAndExtraPotions()
-        {
-            var list = new List<(int itemId, int price)>();
-
-            void AddItem(int itemId, int fallbackGold = 1)
-            {
-                Item temp = new Item();
-                temp.SetDefaults(itemId);
-                int price = temp.value > 0 ? temp.value : Item.buyPrice(0, fallbackGold, 0, 0);
-                list.Add((itemId, price));
-            }
-
-            AddItem(ItemID.FlaskofPoison, 2);
-            AddItem(ItemID.FlaskofFire, 2);
-            AddItem(ItemID.FlaskofParty, 2);
-            AddItem(ItemID.FishingPotion, 1);
-            AddItem(ItemID.SonarPotion, 1);
-            AddItem(ItemID.CratePotion, 1);
-            AddItem(ItemID.PotionOfReturn, 2);
-            AddItem(ItemID.LesserHealingPotion, 1);
-            AddItem(ItemID.LesserManaPotion, 1);
-            AddItem(ItemID.LesserRestorationPotion, 1);
-            AddItem(ItemID.LuckPotionLesser, 1);
-            AddItem(ItemID.InvisibilityPotion, 1);
-            AddItem(ItemID.BiomeSightPotion, 2);
-            AddItem(ItemID.LovePotion, 1);
-            AddItem(ItemID.StinkPotion, 1);
-            AddItem(ItemID.GenderChangePotion, 5);
-
-            if (Main.hardMode)
-            {
-                AddItem(ItemID.FlaskofIchor, 5);
-                AddItem(ItemID.FlaskofCursedFlames, 5);
-                AddItem(ItemID.FlaskofVenom, 6);
-                AddItem(ItemID.FlaskofNanites, 6);
-                AddItem(ItemID.FlaskofGold, 5);
-                AddItem(ItemID.TeleportationPotion, 3);
-                AddItem(ItemID.LuckPotionGreater, 4);
-                AddItem(ItemID.SuperHealingPotion, 8);
-                AddItem(ItemID.SuperManaPotion, 8);
-            }
-
-            return list;
-        }
-
-        private List<(int itemId, int price)> GetUnlockedBossBags()
-        {
-            var list = new List<(int itemId, int price)>();
-
-            void AddBag(bool condition, int itemId, int gold, int silver = 0)
-            {
-                if (condition)
-                    list.Add((itemId, Item.buyPrice(0, gold, silver, 0)));
-            }
-
-            // Pre-Hardmode Boss & Mini-Boss (Diskon 50%)
-            AddBag(NPC.downedSlimeKing, ItemID.KingSlimeBossBag, 5);
-            AddBag(NPC.downedBoss1, ItemID.EyeOfCthulhuBossBag, 7, 50);
-            AddBag(DD2Event.DownedInvasionT1, ItemID.BossBagDarkMage, 7, 50);
-            AddBag(NPC.downedBoss2, ItemID.EaterOfWorldsBossBag, 10);
-            AddBag(NPC.downedBoss2, ItemID.BrainOfCthulhuBossBag, 10);
-            AddBag(NPC.downedQueenBee, ItemID.QueenBeeBossBag, 12, 50);
-            AddBag(NPC.downedBoss3, ItemID.SkeletronBossBag, 15);
-            AddBag(NPC.downedDeerclops, ItemID.DeerclopsBossBag, 15);
-            AddBag(Main.hardMode, ItemID.WallOfFleshBossBag, 20);
-
-            // Hardmode Boss & Mini-Boss (Diskon 50%)
-            AddBag(NPC.downedQueenSlime, ItemID.QueenSlimeBossBag, 25);
-            AddBag(DD2Event.DownedInvasionT2, ItemID.BossBagOgre, 25);
-            AddBag(NPC.downedMechBoss1, ItemID.DestroyerBossBag, 30);
-            AddBag(NPC.downedMechBoss2, ItemID.TwinsBossBag, 30);
-            AddBag(NPC.downedMechBoss3, ItemID.SkeletronPrimeBossBag, 30);
-            AddBag(NPC.downedPlantBoss, ItemID.PlanteraBossBag, 40);
-            AddBag(NPC.downedGolemBoss, ItemID.GolemBossBag, 45);
-            AddBag(DD2Event.DownedInvasionT3, ItemID.BossBagBetsy, 45);
-            AddBag(NPC.downedFishron, ItemID.FishronBossBag, 50);
-            AddBag(NPC.downedEmpressOfLight, ItemID.FairyQueenBossBag, 50);
-            AddBag(NPC.downedAncientCultist, ItemID.CultistBossBag, 60);
-            AddBag(NPC.downedMoonlord, ItemID.MoonLordBossBag, 75);
-
-            return list;
-        }
-
-        private int GetBiomeCrateForQuestFish(int questFishId)
-        {
-            switch (questFishId)
-            {
-                // 1. 100% Sky Crate (Fiks hanya di Sky)
-                case ItemID.Cloudfish:
-                case ItemID.Harpyfish:
-                case ItemID.Wyverntail:
-                    return Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
-
-                // 2. Campuran Sky / Space / Surface -> 50% Sky Crate, 50% Gold Crate
+                // Sky / Floating Island
                 case ItemID.Angelfish:
+                case ItemID.Cloudfish:
                 case ItemID.FallenStarfish:
                 case ItemID.TheFishofCthulu:
-                    return Main.rand.Next(2) == 0
-                        ? (Main.hardMode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate)
-                        : (Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate);
+                case ItemID.Wyverntail:
+                    return isHardmode ? ItemID.FloatingIslandFishingCrateHard : ItemID.FloatingIslandFishingCrate;
 
-                // 3. Underground & Cavern -> 100% Gold Crate
-                case ItemID.AmanitaFungifin:
-                case ItemID.Batfish:
-                case ItemID.Bonefish:
-                case ItemID.Dirtfish:
-                case ItemID.Jewelfish:
-                case ItemID.Spiderfish:
-                    return Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate;
-
-                // 4. Ocean -> 100% Ocean Crate
+                // Ocean
                 case ItemID.CapnTunabeard:
                 case ItemID.Clownfish:
-                    return Main.hardMode ? ItemID.OceanCrateHard : ItemID.OceanCrate;
+                case ItemID.DemonicHellfish:
+                case ItemID.Fishron:
+                case ItemID.Pengfish:
+                case ItemID.Pixiefish:
+                case ItemID.Slimefish:
+                case ItemID.TropicalBarracuda:
+                    return isHardmode ? ItemID.OceanCrateHard : ItemID.OceanCrate;
 
-                // 5. Jungle & Honey -> 100% Jungle Crate
-                case ItemID.BumblebeeTuna:
+                // Jungle
                 case ItemID.Catfish:
                 case ItemID.Derpfish:
                 case ItemID.Mudfish:
-                case ItemID.TropicalBarracuda:
-                    return Main.hardMode ? ItemID.JungleFishingCrateHard : ItemID.JungleFishingCrate;
+                    return isHardmode ? ItemID.JungleFishingCrateHard : ItemID.JungleFishingCrate;
 
-                // 6. Snow / Tundra -> 100% Frozen Crate
-                case ItemID.Fishron:
+                // Snow / Tundra
+                case ItemID.Fishotron:
+                case ItemID.IcebergFish:
                 case ItemID.MutantFlinxfin:
-                case ItemID.Pengfish:
                 case ItemID.TundraTrout:
-                    return Main.hardMode ? ItemID.FrozenCrateHard : ItemID.FrozenCrate;
+                    return isHardmode ? ItemID.FrozenCrateHard : ItemID.FrozenCrate;
 
-                // 7. Desert / Oasis -> 100% Oasis Crate
+                // Desert / Oasis
                 case ItemID.ScarabFish:
                 case ItemID.ScorpioFish:
-                    return Main.hardMode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
+                    return isHardmode ? ItemID.OasisCrateHard : ItemID.OasisCrate;
 
-                // 8. Corruption -> 100% Corrupt Crate
+                // Corruption
                 case ItemID.Cursedfish:
                 case ItemID.EaterofPlankton:
                 case ItemID.InfectedScabbardfish:
-                    return Main.hardMode ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
+                    return isHardmode ? ItemID.CorruptFishingCrateHard : ItemID.CorruptFishingCrate;
 
-                // 9. Crimson -> 100% Crimson Crate
+                // Crimson
                 case ItemID.BloodyManowar:
                 case ItemID.Ichorfish:
-                    return Main.hardMode ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
+                    return isHardmode ? ItemID.CrimsonFishingCrateHard : ItemID.CrimsonFishingCrate;
 
-                // 10. Hallow -> 100% Hallowed Crate
+                // Hallow
                 case ItemID.MirageFish:
-                case ItemID.Pixiefish:
                 case ItemID.UnicornFish:
-                    return Main.hardMode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
+                    return isHardmode ? ItemID.HallowedFishingCrateHard : ItemID.HallowedFishingCrate;
 
-                // 11. Underworld / Lava -> 100% Lava Crate
-                case ItemID.DemonicHellfish:
+                // Underworld / Lava
                 case ItemID.GuideVoodooFish:
                 case ItemID.Hungerfish:
-                    return Main.hardMode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
+                    return isHardmode ? ItemID.LavaCrateHard : ItemID.LavaCrate;
 
-                // 12. Surface Umum / Forest -> 70% Iron Crate, 30% Golden Crate
+                // Dungeon
+                case ItemID.Bonefish:
+                    return isHardmode ? ItemID.DungeonFishingCrateHard : ItemID.DungeonFishingCrate;
+
+                // Forest / Underground / Cavern Default
                 default:
-                    return Main.rand.Next(100) < 70
-                        ? (Main.hardMode ? ItemID.IronCrateHard : ItemID.IronCrate)
-                        : (Main.hardMode ? ItemID.GoldenCrateHard : ItemID.GoldenCrate);
+                    return isHardmode ? ItemID.IronCrateHard : ItemID.IronCrate;
             }
         }
     }
