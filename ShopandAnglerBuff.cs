@@ -11,13 +11,11 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 0, 0);
+        public override Version Version => new Version(2, 0, 1);
         public override string Author => "CustomPlugin";
         public override string Description => "Clothier menjual Treasure Bag boss yang sudah dikalahkan dengan harga custom & hadiah 2x Crate sesuai bioma saat menyelesaikan quest Angler.";
 
         private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
-
-        // Pelacak mini-boss / event boss yang sudah dikalahkan di world
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
 
         public ShopandAnglerBuff(Main game) : base(game) { }
@@ -65,15 +63,7 @@ namespace ShopandAnglerBuffPlugin
             if (args.npc == null) return;
             int type = args.npc.type;
 
-            if (type == NPCID.DD2DarkMageT1 || type == NPCID.DD2DarkMageT3 ||
-                type == NPCID.DD2OgreT2 || type == NPCID.DD2OgreT3 ||
-                type == NPCID.PirateShip ||
-                type == NPCID.MourningWood ||
-                type == NPCID.Pumpking ||
-                type == NPCID.Everscream ||
-                type == NPCID.SantaNK1 ||
-                type == NPCID.IceQueen ||
-                type == NPCID.MartianSaucerCore)
+            if (type == NPCID.DD2Betsy)
             {
                 defeatedMiniBosses.Add(type);
             }
@@ -91,7 +81,6 @@ namespace ShopandAnglerBuffPlugin
             if (npc == null || !npc.active || npc.type != NPCID.Clothier)
                 return;
 
-            // Cek apakah ada pemain yang sedang membuka toko Clothier ini
             bool anyPlayerTalking = false;
             for (int i = 0; i < Main.maxPlayers; i++)
             {
@@ -106,16 +95,16 @@ namespace ShopandAnglerBuffPlugin
             if (!anyPlayerTalking) return;
 
             Chest shop = Main.instance.shop[Main.npcShop];
-            if (shop == null) return;
+            if (shop == null || shop.item == null) return;
 
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
             if (availableBags.Count == 0) return;
 
-            // Cari slot kosong setelah barang jualan asli Clothier
+            int maxSlots = shop.item.Length;
             int slot = 0;
-            while (slot < Chest.maxItems && shop.item[slot] != null && shop.item[slot].type > 0)
+
+            while (slot < maxSlots && shop.item[slot] != null && shop.item[slot].type > 0)
             {
-                // Hindari duplikasi jika sudah terisi
                 if (shop.item[slot].type == availableBags[0].bagId)
                     return;
                 slot++;
@@ -123,7 +112,7 @@ namespace ShopandAnglerBuffPlugin
 
             foreach (var entry in availableBags)
             {
-                if (slot >= Chest.maxItems) break;
+                if (slot >= maxSlots) break;
 
                 Item bagItem = new Item();
                 bagItem.SetDefaults(entry.bagId);
@@ -184,12 +173,8 @@ namespace ShopandAnglerBuffPlugin
             if (NPC.downedGolemBoss)
                 list.Add((ItemID.GolemBossBag, Coins(2, 31)));
 
-            if (NPC.downedTowerSolar || NPC.downedTowerVortex || NPC.downedTowerNebula || NPC.downedTowerStardust || NPC.downedEmpressOfLight || NPC.downedFishron || NPC.downedGolemBoss)
-            {
-                // Betsy (Old One's Army Tier 3)
-                if (defeatedMiniBosses.Contains(NPCID.DD2Betsy) || Terraria.GameContent.Events.DD2Event.DownedInvasionT3)
-                    list.Add((ItemID.BossBagBetsy, Coins(4, 51)));
-            }
+            if (defeatedMiniBosses.Contains(NPCID.DD2Betsy) || Terraria.GameContent.Events.DD2Event.DownedInvasionT3)
+                list.Add((ItemID.BossBagBetsy, Coins(4, 51)));
 
             if (NPC.downedFishron)
                 list.Add((ItemID.FishronBossBag, Coins(7, 89)));
@@ -267,7 +252,6 @@ namespace ShopandAnglerBuffPlugin
 
                 // Snow / Tundra
                 case ItemID.Fishotron:
-                case ItemID.IcebergFish:
                 case ItemID.MutantFlinxfin:
                 case ItemID.TundraTrout:
                     return isHardmode ? ItemID.FrozenCrateHard : ItemID.FrozenCrate;
