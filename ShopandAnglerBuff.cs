@@ -11,13 +11,14 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 2, 0);
+        public override Version Version => new Version(2, 3, 0);
         public override string Author => "CustomPlugin";
-        public override string Description => "Toggle /bagshop (/bs) pada Clothier untuk membeli Treasure Bag boss yang sudah dikalahkan & hadiah 2x Crate quest Angler.";
+        public override string Description => "Toggle /bagshop (/bs) pada Clothier (refresh 1 detik anti-error) & hadiah 2x Crate quest Angler.";
 
         private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
         private static HashSet<int> bagShopEnabled = new HashSet<int>();
+        private int[] shopSyncTimer = new int[Main.maxPlayers];
 
         public ShopandAnglerBuff(Main game) : base(game) { }
 
@@ -27,7 +28,6 @@ namespace ShopandAnglerBuffPlugin
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
             ServerApi.Hooks.NpcKilled.Register(this, OnNpcKilled);
-            ServerApi.Hooks.NpcShopOpen.Register(this, OnNpcShopOpen);
 
             Commands.ChatCommands.Add(new Command("bagshop.use", ToggleBagShop, "bagshop", "bs")
             {
@@ -43,7 +43,6 @@ namespace ShopandAnglerBuffPlugin
                 ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
                 ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
                 ServerApi.Hooks.NpcKilled.Deregister(this, OnNpcKilled);
-                ServerApi.Hooks.NpcShopOpen.Deregister(this, OnNpcShopOpen);
             }
             base.Dispose(disposing);
         }
@@ -53,6 +52,7 @@ namespace ShopandAnglerBuffPlugin
             int who = args.Who;
             if (who >= 0 && who < Main.maxPlayers)
             {
+                shopSyncTimer[who] = 0;
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
                     lastQuestCount[who] = player.TPlayer.anglerQuestsFinished;
@@ -63,6 +63,8 @@ namespace ShopandAnglerBuffPlugin
         {
             lastQuestCount.Remove(args.Who);
             bagShopEnabled.Remove(args.Who);
+            if (args.Who >= 0 && args.Who < Main.maxPlayers)
+                shopSyncTimer[args.Who] = 0;
         }
 
         private void ToggleBagShop(CommandArgs args)
@@ -71,12 +73,14 @@ namespace ShopandAnglerBuffPlugin
             if (bagShopEnabled.Contains(index))
             {
                 bagShopEnabled.Remove(index);
+                shopSyncTimer[index] = 0;
                 args.Player.SendInfoMessage("[BagShop] Mode Treasure Bag DIMATIKAN. Toko Clothier kembali normal.");
             }
             else
             {
                 bagShopEnabled.Add(index);
-                args.Player.SendSuccessMessage("[BagShop] Mode Treasure Bag DIAKTIFKAN! Silakan buka Shop di Clothier.");
+                shopSyncTimer[index] = 60; // Langsung kirim di tick berikutnya saat dialog dibuka
+                args.Player.SendSuccessMessage("[BagShop] Mode Treasure Bag DIAKTIFKAN! Silakan bicara dan buka Shop di Clothier.");
             }
         }
 
@@ -94,38 +98,27 @@ namespace ShopandAnglerBuffPlugin
             return (platinum * 1000000) + (gold * 10000) + (silver * 100) + copper;
         }
 
-        // Mengganti isi toko Clothier dengan Treasure Bag HANYA jika pemain mengaktifkan /bagshop (/bs)
-        private void OnNpcShopOpen(NPCShopOpenEventArgs args)
+        private void SendBagShopToPlayer(int who)
         {
-            if (args.Npc == null || args.Npc.type != NPCID.Clothier)
-                return;
-
-            if (!bagShopEnabled.Contains(args.Who))
-                return;
-
-            Chest shop = args.Shop;
-            if (shop == null || shop.item == null)
-                return;
-
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
-            int maxSlots = shop.item.Length;
+            int maxSlots = Chest.maxItems;
 
-            // Bersihkan seluruh slot toko agar bersih berisi daftar Treasure Bag
-            for (int i = 0; i < maxSlots; i++)
+            for (int slot = 0; slot < maxSlots; slot++)
             {
-                if (shop.item[i] == null)
-                    shop.item[i] = new Item();
-                shop.item[i].TurnToAir();
-            }
+                int itemType = 0;
+                int stack = 0;
+                int prefix = 0;
+                int price = 0;
 
-            int slot = 0;
-            foreach (var entry in availableBags)
-            {
-                if (slot >= maxSlots) break;
+                if (slot < availableBags.Count)
+                {
+                    itemType = availableBags[slot].bagId;
+                    stack = 1;
+                    prefix = 0;
+                    price = availableBags[slot].price;
+                }
 
-                shop.item[slot].SetDefaults(entry.bagId);
-                shop.item[slot].shopCustomPrice = entry.price;
-                slot++;
+                NetMessage.SendData((int)PacketTypes.UpdateShopItem, who, -1, null, slot, itemType, stack, prefix, price);
             }
         }
 
@@ -195,7 +188,6 @@ namespace ShopandAnglerBuffPlugin
             return list;
         }
 
-        // Deteksi penyelesaian quest Angler -> Beri 2x Crate sesuai bioma ikan quest
         private void OnGameUpdate(EventArgs args)
         {
             for (int i = 0; i < Main.maxPlayers; i++)
@@ -204,7 +196,31 @@ namespace ShopandAnglerBuffPlugin
                 if (tsPlayer == null || !tsPlayer.Active || tsPlayer.TPlayer == null)
                     continue;
 
-                int currentQuests = tsPlayer.TPlayer.anglerQuestsFinished;
+                Player player = tsPlayer.TPlayer;
+
+                // 1. Cek jika pemain mengaktifkan /bagshop dan sedang membuka dialog Clothier
+                if (bagShopEnabled.Contains(i))
+                {
+                    int talkNpc = player.talkNPC;
+                    if (talkNpc >= 0 && talkNpc < Main.maxNPCs && Main.npc[talkNpc].active && Main.npc[talkNpc].type == NPCID.Clothier)
+                    {
+                        shopSyncTimer[i]++;
+                        // Kirim 1x setiap 60 tick (1 detik) agar tidak hilang saat klik Shop dan tetap ringan
+                        if (shopSyncTimer[i] >= 60)
+                        {
+                            shopSyncTimer[i] = 0;
+                            SendBagShopToPlayer(i);
+                        }
+                    }
+                    else
+                    {
+                        // Siapkan agar langsung terkirim begitu pertama kali menyentuh dialog Clothier
+                        shopSyncTimer[i] = 60;
+                    }
+                }
+
+                // 2. Deteksi penyelesaian quest Angler -> Beri 2x Crate sesuai bioma ikan quest
+                int currentQuests = player.anglerQuestsFinished;
                 if (!lastQuestCount.TryGetValue(i, out int prevQuests))
                 {
                     lastQuestCount[i] = currentQuests;
@@ -300,4 +316,3 @@ namespace ShopandAnglerBuffPlugin
         }
     }
 }
-
