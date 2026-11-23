@@ -11,7 +11,7 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 3, 2);
+        public override Version Version => new Version(2, 4, 0);
         public override string Author => "CustomPlugin";
         public override string Description => "Toggle /bagshop (/bs) pada Clothier & hadiah 2x Crate quest Angler.";
 
@@ -19,7 +19,6 @@ namespace ShopandAnglerBuffPlugin
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
         private static HashSet<int> bagShopEnabled = new HashSet<int>();
         private int[] shopSyncTimer = new int[Main.maxPlayers];
-        private bool[] warnedEmpty = new bool[Main.maxPlayers];
 
         public ShopandAnglerBuff(Main game) : base(game) { }
 
@@ -54,7 +53,6 @@ namespace ShopandAnglerBuffPlugin
             if (who >= 0 && who < Main.maxPlayers)
             {
                 shopSyncTimer[who] = 0;
-                warnedEmpty[who] = false;
                 TSPlayer player = TShock.Players[who];
                 if (player != null && player.TPlayer != null)
                     lastQuestCount[who] = player.TPlayer.anglerQuestsFinished;
@@ -66,10 +64,7 @@ namespace ShopandAnglerBuffPlugin
             lastQuestCount.Remove(args.Who);
             bagShopEnabled.Remove(args.Who);
             if (args.Who >= 0 && args.Who < Main.maxPlayers)
-            {
                 shopSyncTimer[args.Who] = 0;
-                warnedEmpty[args.Who] = false;
-            }
         }
 
         private void ToggleBagShop(CommandArgs args)
@@ -79,14 +74,12 @@ namespace ShopandAnglerBuffPlugin
             {
                 bagShopEnabled.Remove(index);
                 shopSyncTimer[index] = 0;
-                warnedEmpty[index] = false;
                 args.Player.SendInfoMessage("[BagShop] Mode Treasure Bag DIMATIKAN. Toko Clothier kembali normal.");
             }
             else
             {
                 bagShopEnabled.Add(index);
                 shopSyncTimer[index] = 60;
-                warnedEmpty[index] = false;
                 int count = GetDefeatedBossBags().Count;
                 args.Player.SendSuccessMessage($"[BagShop] Mode Treasure Bag DIAKTIFKAN! ({count} Treasure Bag tersedia). Silakan buka Shop di Clothier.");
             }
@@ -111,48 +104,39 @@ namespace ShopandAnglerBuffPlugin
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
             const int maxSlots = 40;
 
-            if (availableBags.Count == 0 && !warnedEmpty[who])
-            {
-                warnedEmpty[who] = true;
-                TShock.Players[who]?.SendWarningMessage("[BagShop] Belum ada boss yang tercatat kalah di world ini! Kalahkan boss dulu agar bag-nya muncul.");
-            }
+            int prevShop = Main.npcShop;
+            Main.npcShop = 1;
 
-            // Sinkronkan juga ke Chest toko server agar transaksi beli di server valid
-            Chest serverShop = Main.instance?.shop?[Main.npcShop];
+            if (Main.instance.shop[1] == null)
+                Main.instance.shop[1] = new Chest(true);
+
+            Chest shop = Main.instance.shop[1];
 
             for (int slot = 0; slot < maxSlots; slot++)
             {
-                int itemType = 0;
-                int stack = 0;
-                int prefix = 0;
-                int price = 0;
+                if (shop.item[slot] == null)
+                    shop.item[slot] = new Item();
 
                 if (slot < availableBags.Count)
                 {
-                    itemType = availableBags[slot].bagId;
-                    stack = 1;
-                    prefix = 0;
-                    price = availableBags[slot].price;
+                    int itemType = availableBags[slot].bagId;
+                    int price = availableBags[slot].price;
 
-                    if (serverShop != null && serverShop.item != null && slot < serverShop.item.Length)
-                    {
-                        if (serverShop.item[slot] == null)
-                            serverShop.item[slot] = new Item();
-                        serverShop.item[slot].SetDefaults(itemType);
-                        serverShop.item[slot].stack = 1;
-                        serverShop.item[slot].shopCustomPrice = price;
-                    }
+                    shop.item[slot].SetDefaults(itemType);
+                    shop.item[slot].stack = 1;
+                    shop.item[slot].prefix = 0;
+                    shop.item[slot].shopCustomPrice = price;
+
+                    NetMessage.SendData(104, who, -1, null, slot, itemType, 1, 0, price);
                 }
                 else
                 {
-                    if (serverShop != null && serverShop.item != null && slot < serverShop.item.Length && serverShop.item[slot] != null)
-                    {
-                        serverShop.item[slot].TurnToAir();
-                    }
+                    shop.item[slot].TurnToAir();
+                    NetMessage.SendData(104, who, -1, null, slot, 0, 0, 0, 0);
                 }
-
-                NetMessage.SendData(104, who, -1, null, slot, itemType, stack, prefix, price);
             }
+
+            Main.npcShop = prevShop;
         }
 
         private List<(int bagId, int price)> GetDefeatedBossBags()
@@ -247,7 +231,6 @@ namespace ShopandAnglerBuffPlugin
                     else
                     {
                         shopSyncTimer[i] = 60;
-                        warnedEmpty[i] = false;
                     }
                 }
 
