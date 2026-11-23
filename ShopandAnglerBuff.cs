@@ -95,7 +95,7 @@ namespace ShopandAnglerBuffPlugin
         }
 
         // Mengganti isi toko Clothier dengan Treasure Bag HANYA jika pemain mengaktifkan /bagshop (/bs)
-        private void OnNpcShopOpen(NpcShopOpenEventArgs args)
+        private void OnNpcShopOpen(NPCShopOpenEventArgs args)
         {
             if (args.Npc == null || args.Npc.type != NPCID.Clothier)
                 return;
