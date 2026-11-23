@@ -11,12 +11,13 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 0, 1);
+        public override Version Version => new Version(2, 2, 0);
         public override string Author => "CustomPlugin";
-        public override string Description => "Clothier menjual Treasure Bag boss yang sudah dikalahkan dengan harga custom & hadiah 2x Crate sesuai bioma saat menyelesaikan quest Angler.";
+        public override string Description => "Toggle /bagshop (/bs) pada Clothier untuk membeli Treasure Bag boss yang sudah dikalahkan & hadiah 2x Crate quest Angler.";
 
         private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
+        private static HashSet<int> bagShopEnabled = new HashSet<int>();
 
         public ShopandAnglerBuff(Main game) : base(game) { }
 
@@ -26,7 +27,12 @@ namespace ShopandAnglerBuffPlugin
             ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
             ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
             ServerApi.Hooks.NpcKilled.Register(this, OnNpcKilled);
-            ServerApi.Hooks.NpcAIUpdate.Register(this, OnNpcAIUpdate);
+            ServerApi.Hooks.NpcShopOpen.Register(this, OnNpcShopOpen);
+
+            Commands.ChatCommands.Add(new Command("bagshop.use", ToggleBagShop, "bagshop", "bs")
+            {
+                HelpText = "Mengaktifkan/menonaktifkan toko Treasure Bag pada Clothier."
+            });
         }
 
         protected override void Dispose(bool disposing)
@@ -37,7 +43,7 @@ namespace ShopandAnglerBuffPlugin
                 ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
                 ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
                 ServerApi.Hooks.NpcKilled.Deregister(this, OnNpcKilled);
-                ServerApi.Hooks.NpcAIUpdate.Deregister(this, OnNpcAIUpdate);
+                ServerApi.Hooks.NpcShopOpen.Deregister(this, OnNpcShopOpen);
             }
             base.Dispose(disposing);
         }
@@ -56,16 +62,30 @@ namespace ShopandAnglerBuffPlugin
         private void OnServerLeave(LeaveEventArgs args)
         {
             lastQuestCount.Remove(args.Who);
+            bagShopEnabled.Remove(args.Who);
+        }
+
+        private void ToggleBagShop(CommandArgs args)
+        {
+            int index = args.Player.Index;
+            if (bagShopEnabled.Contains(index))
+            {
+                bagShopEnabled.Remove(index);
+                args.Player.SendInfoMessage("[BagShop] Mode Treasure Bag DIMATIKAN. Toko Clothier kembali normal.");
+            }
+            else
+            {
+                bagShopEnabled.Add(index);
+                args.Player.SendSuccessMessage("[BagShop] Mode Treasure Bag DIAKTIFKAN! Silakan buka Shop di Clothier.");
+            }
         }
 
         private void OnNpcKilled(NpcKilledEventArgs args)
         {
             if (args.npc == null) return;
-            int type = args.npc.type;
-
-            if (type == NPCID.DD2Betsy)
+            if (args.npc.type == NPCID.DD2Betsy)
             {
-                defeatedMiniBosses.Add(type);
+                defeatedMiniBosses.Add(NPCID.DD2Betsy);
             }
         }
 
@@ -74,50 +94,37 @@ namespace ShopandAnglerBuffPlugin
             return (platinum * 1000000) + (gold * 10000) + (silver * 100) + copper;
         }
 
-        // Mengisi toko Clothier dengan Treasure Bag dari Boss yang sudah dikalahkan
-        private void OnNpcAIUpdate(NpcAiUpdateEventArgs args)
+        // Mengganti isi toko Clothier dengan Treasure Bag HANYA jika pemain mengaktifkan /bagshop (/bs)
+        private void OnNpcShopOpen(NpcShopOpenEventArgs args)
         {
-            NPC npc = args.Npc;
-            if (npc == null || !npc.active || npc.type != NPCID.Clothier)
+            if (args.Npc == null || args.Npc.type != NPCID.Clothier)
                 return;
 
-            bool anyPlayerTalking = false;
-            for (int i = 0; i < Main.maxPlayers; i++)
-            {
-                Player p = Main.player[i];
-                if (p != null && p.active && p.talkNPC == npc.whoAmI)
-                {
-                    anyPlayerTalking = true;
-                    break;
-                }
-            }
+            if (!bagShopEnabled.Contains(args.Who))
+                return;
 
-            if (!anyPlayerTalking) return;
-
-            Chest shop = Main.instance.shop[Main.npcShop];
-            if (shop == null || shop.item == null) return;
+            Chest shop = args.Shop;
+            if (shop == null || shop.item == null)
+                return;
 
             List<(int bagId, int price)> availableBags = GetDefeatedBossBags();
-            if (availableBags.Count == 0) return;
-
             int maxSlots = shop.item.Length;
-            int slot = 0;
 
-            while (slot < maxSlots && shop.item[slot] != null && shop.item[slot].type > 0)
+            // Bersihkan seluruh slot toko agar bersih berisi daftar Treasure Bag
+            for (int i = 0; i < maxSlots; i++)
             {
-                if (shop.item[slot].type == availableBags[0].bagId)
-                    return;
-                slot++;
+                if (shop.item[i] == null)
+                    shop.item[i] = new Item();
+                shop.item[i].TurnToAir();
             }
 
+            int slot = 0;
             foreach (var entry in availableBags)
             {
                 if (slot >= maxSlots) break;
 
-                Item bagItem = new Item();
-                bagItem.SetDefaults(entry.bagId);
-                bagItem.shopCustomPrice = entry.price;
-                shop.item[slot] = bagItem;
+                shop.item[slot].SetDefaults(entry.bagId);
+                shop.item[slot].shopCustomPrice = entry.price;
                 slot++;
             }
         }
@@ -293,3 +300,4 @@ namespace ShopandAnglerBuffPlugin
         }
     }
 }
+
