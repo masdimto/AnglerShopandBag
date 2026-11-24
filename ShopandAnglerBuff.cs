@@ -11,9 +11,9 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 4, 1);
+        public override Version Version => new Version(3, 0, 0);
         public override string Author => "CustomPlugin";
-        public override string Description => "Toggle /bagshop (/bs) pada Clothier & hadiah 2x Crate quest Angler.";
+        public override string Description => "Toko Treasure Bag pada Clothier (/bagshop, /bs) + Beli Instan (/bb) & Hadiah 2x Crate quest Angler.";
 
         private Dictionary<int, int> lastQuestCount = new Dictionary<int, int>();
         private static HashSet<int> defeatedMiniBosses = new HashSet<int>();
@@ -32,6 +32,11 @@ namespace ShopandAnglerBuffPlugin
             Commands.ChatCommands.Add(new Command("bagshop.use", ToggleBagShop, "bagshop", "bs")
             {
                 HelpText = "Mengaktifkan/menonaktifkan toko Treasure Bag pada Clothier."
+            });
+
+            Commands.ChatCommands.Add(new Command("bagshop.use", BuyBagCommand, "belibag", "bb")
+            {
+                HelpText = "Melihat daftar & membeli Treasure Bag secara langsung (/bb <nomor>)."
             });
         }
 
@@ -81,8 +86,100 @@ namespace ShopandAnglerBuffPlugin
                 bagShopEnabled.Add(index);
                 shopSyncTimer[index] = 60;
                 int count = GetDefeatedBossBags().Count;
-                args.Player.SendSuccessMessage($"[BagShop] Mode Treasure Bag DIAKTIFKAN! ({count} Treasure Bag tersedia). Silakan buka Shop di Clothier.");
+                args.Player.SendSuccessMessage($"[BagShop] Mode Treasure Bag DIAKTIFKAN! ({count} bag tersedia). Buka Shop di Clothier atau ketik /bb.");
             }
+        }
+
+        // Command /bb atau /belibag sebagai jalur pasti beli bag jika UI Mobile kosong
+        private void BuyBagCommand(CommandArgs args)
+        {
+            var bags = GetDefeatedBossBags();
+            if (bags.Count == 0)
+            {
+                args.Player.SendErrorMessage("[BagShop] Belum ada boss yang dikalahkan di world ini.");
+                return;
+            }
+
+            if (args.Parameters.Count == 0 || !int.TryParse(args.Parameters[0], out int choice) || choice < 1 || choice > bags.Count)
+            {
+                args.Player.SendInfoMessage("=== Daftar Treasure Bag Tersedia (Ketik /bb <nomor>) ===");
+                for (int i = 0; i < bags.Count; i++)
+                {
+                    string name = Lang.GetItemNameValue(bags[i].bagId);
+                    string priceText = FormatCoins(bags[i].price);
+                    args.Player.SendMessage($"{i + 1}. {name} - {priceText}", Microsoft.Xna.Framework.Color.Gold);
+                }
+                return;
+            }
+
+            var selected = bags[choice - 1];
+            long totalMoney = GetPlayerTotalCopper(args.Player.TPlayer);
+
+            if (totalMoney < selected.price)
+            {
+                args.Player.SendErrorMessage($"[BagShop] Uang tidak cukup! Butuh {FormatCoins(selected.price)}.");
+                return;
+            }
+
+            DeductPlayerCoins(args.Player, selected.price);
+            args.Player.GiveItem(selected.bagId, 1);
+            string bagName = Lang.GetItemNameValue(selected.bagId);
+            args.Player.SendSuccessMessage($"[BagShop] Berhasil membeli 1x {bagName} seharga {FormatCoins(selected.price)}!");
+        }
+
+        private long GetPlayerTotalCopper(Player player)
+        {
+            long total = 0;
+            // Slot 50-53 adalah slot Coins di inventory utama
+            for (int i = 0; i < 54; i++)
+            {
+                Item item = player.inventory[i];
+                if (item == null || item.stack <= 0) continue;
+                if (item.type == ItemID.CopperCoin) total += item.stack;
+                else if (item.type == ItemID.SilverCoin) total += item.stack * 100L;
+                else if (item.type == ItemID.GoldCoin) total += item.stack * 10000L;
+                else if (item.type == ItemID.PlatinumCoin) total += item.stack * 1000000L;
+            }
+            return total;
+        }
+
+        private void DeductPlayerCoins(TSPlayer tsPlayer, int costCopper)
+        {
+            Player player = tsPlayer.TPlayer;
+            long remaining = GetPlayerTotalCopper(player) - costCopper;
+
+            // Hapus semua koin lama di inventory (slot 0-53)
+            for (int i = 0; i < 54; i++)
+            {
+                Item item = player.inventory[i];
+                if (item != null && (item.type == ItemID.CopperCoin || item.type == ItemID.SilverCoin || item.type == ItemID.GoldCoin || item.type == ItemID.PlatinumCoin))
+                {
+                    item.TurnToAir();
+                    tsPlayer.SendData(PacketTypes.PlayerSlot, "", tsPlayer.Index, i);
+                }
+            }
+
+            // Kembalikan sisa kembalian
+            int plat = (int)(remaining / 1000000);
+            remaining %= 1000000;
+            int gold = (int)(remaining / 10000);
+            remaining %= 10000;
+            int silver = (int)(remaining / 100);
+            int copper = (int)(remaining % 100);
+
+            if (plat > 0) tsPlayer.GiveItem(ItemID.PlatinumCoin, plat);
+            if (gold > 0) tsPlayer.GiveItem(ItemID.GoldCoin, gold);
+            if (silver > 0) tsPlayer.GiveItem(ItemID.SilverCoin, silver);
+            if (copper > 0) tsPlayer.GiveItem(ItemID.CopperCoin, copper);
+        }
+
+        private string FormatCoins(int copper)
+        {
+            int p = copper / 1000000;
+            int g = (copper % 1000000) / 10000;
+            if (p > 0 && g > 0) return $"{p} Platinum {g} Gold";
+            if (p > 0) return $"{p} Platinum";
+            return $"{g} Gold";
         }
 
         private void OnNpcKilled(NpcKilledEventArgs args)
@@ -127,6 +224,8 @@ namespace ShopandAnglerBuffPlugin
                     shop.item[slot].SetDefaults(itemType);
                     shop.item[slot].stack = 1;
                     shop.item[slot].prefix = 0;
+                    // Set keduanya agar NetMessage.SendData(104) terbaca di client Mobile
+                    shop.item[slot].value = price;
                     shop.item[slot].shopCustomPrice = price;
 
                     NetMessage.SendData(104, who, -1, null, slot, itemType, 1, 0, price);
