@@ -11,7 +11,7 @@ namespace ShopandAnglerBuffPlugin
     public class ShopandAnglerBuff : TerrariaPlugin
     {
         public override string Name => "ShopandAnglerBuff";
-        public override Version Version => new Version(2, 4, 0);
+        public override Version Version => new Version(2, 4, 1);
         public override string Author => "CustomPlugin";
         public override string Description => "Toggle /bagshop (/bs) pada Clothier & hadiah 2x Crate quest Angler.";
 
@@ -108,9 +108,11 @@ namespace ShopandAnglerBuffPlugin
             Main.npcShop = 1;
 
             if (Main.instance.shop[1] == null)
-                Main.instance.shop[1] = new Chest(true);
+                Main.instance.shop[1] = new Chest();
 
             Chest shop = Main.instance.shop[1];
+            if (shop.item == null)
+                shop.item = new Item[maxSlots];
 
             for (int slot = 0; slot < maxSlots; slot++)
             {
